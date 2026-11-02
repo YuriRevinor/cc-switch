@@ -353,6 +353,30 @@ pub fn get_claude_desktop_default_routes(
     crate::claude_desktop_config::default_proxy_routes()
 }
 
+/// Claude Code 的一张卡导进 Desktop 后的样子；导不了时为 `None`。
+fn desktop_provider_from_claude(provider: &Provider) -> Option<Provider> {
+    // 官方卡不导入：Desktop 有自己的官方卡。绑了 Claude 账号的官方卡在 Desktop 校验里也算官方
+    // （账号卡），不在这里挡掉就会被当成能直连的供应商导进来
+    if provider.category.as_deref() == Some("official") {
+        return None;
+    }
+    let mut desktop_provider = provider.clone();
+    desktop_provider.in_failover_queue = false;
+    let meta = desktop_provider.meta.get_or_insert_with(Default::default);
+
+    if crate::claude_desktop_config::is_compatible_direct_provider(provider)
+        && claude_provider_models_are_claude_safe(provider)
+    {
+        meta.claude_desktop_mode = Some(ClaudeDesktopMode::Direct);
+    } else if let Some(routes) = suggested_claude_desktop_routes(provider) {
+        meta.claude_desktop_mode = Some(ClaudeDesktopMode::Proxy);
+        meta.claude_desktop_model_routes = routes;
+    } else {
+        return None;
+    }
+    Some(desktop_provider)
+}
+
 #[tauri::command]
 pub async fn import_claude_desktop_providers_from_claude(
     state: State<'_, AppState>,
@@ -373,21 +397,9 @@ fn import_claude_desktop_providers_from_claude_blocking(state: &AppState) -> Res
         if existing_ids.contains(&provider.id) {
             continue;
         }
-
-        let mut desktop_provider = provider.clone();
-        desktop_provider.in_failover_queue = false;
-        let meta = desktop_provider.meta.get_or_insert_with(Default::default);
-
-        if crate::claude_desktop_config::is_compatible_direct_provider(provider)
-            && claude_provider_models_are_claude_safe(provider)
-        {
-            meta.claude_desktop_mode = Some(ClaudeDesktopMode::Direct);
-        } else if let Some(routes) = suggested_claude_desktop_routes(provider) {
-            meta.claude_desktop_mode = Some(ClaudeDesktopMode::Proxy);
-            meta.claude_desktop_model_routes = routes;
-        } else {
+        let Some(desktop_provider) = desktop_provider_from_claude(provider) else {
             continue;
-        }
+        };
 
         state
             .db
@@ -1143,7 +1155,7 @@ pub fn set_opencode_default_model(model: String) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod import_claude_desktop_tests {
-    use super::suggested_claude_desktop_routes;
+    use super::{desktop_provider_from_claude, suggested_claude_desktop_routes};
     use crate::provider::{Provider, ProviderMeta};
     use serde_json::json;
 
@@ -1161,6 +1173,21 @@ mod import_claude_desktop_tests {
             });
         }
         p
+    }
+
+    #[test]
+    fn official_cards_are_not_imported_even_when_bound_to_a_claude_account() {
+        let mut official = make_provider(json!({}), None);
+        official.category = Some("official".to_string());
+        official.meta = Some(
+            serde_json::from_value(json!({ "authBinding": {
+                "source": "managed_account",
+                "authProvider": "claude_official",
+                "accountId": "aaaaaaaa-0000-4000-8000-000000000001:org",
+            }}))
+            .expect("meta"),
+        );
+        assert!(desktop_provider_from_claude(&official).is_none());
     }
 
     #[test]

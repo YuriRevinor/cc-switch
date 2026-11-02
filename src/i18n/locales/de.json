@@ -266,7 +266,10 @@
           "team": "Team",
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
-        }
+        },
+        "desktopDefault": "Aktueller Desktop-Anmeldung folgen",
+        "desktopDefaultDescription": "Verwendet den ursprünglichen Desktop-Datenordner",
+        "desktopHelp": "Mit einem ausgewählten Konto wird dies eine Kontokarte: Wechsle wie zu jeder anderen Karte, und CC Switch öffnet Desktop dann mit dem eigenen Datenordner dieses Kontos (läuft bereits ein anderes Desktop, wird zuerst nachgefragt). Melde dich beim ersten Wechsel in Desktop bei diesem Konto an. Ohne Konto ist es die ursprüngliche offizielle Standardkarte, die dem im Standard-Datenordner von Desktop angemeldeten Konto folgt."
       },
       "grokAccount": {
         "default": "Grok-CLI-Anmeldung folgen",
@@ -348,6 +351,16 @@
         "active": "Das lokale Routing von Claude Desktop läuft – {{address}}:{{port}}",
         "inactive": "Schalten Sie das lokale Routing von Claude Desktop für Anbieter ein, die Modellzuordnung oder Formatkonvertierung benötigen. Konfigurierte Adresse: {{address}}:{{port}}"
       }
+    },
+    "launch": {
+      "opened": "Claude Desktop mit {{name}} geöffnet",
+      "openedForLogin": "Ein neues Claude-Desktop-Fenster wurde geöffnet. Melde dich dort bei {{login}} an",
+      "failed": "Claude Desktop konnte nicht geöffnet werden: {{detail}}",
+      "confirmTitle": "Claude Desktop mit {{name}} öffnen",
+      "quitMessage": "Das laufende Claude Desktop wird zuerst beendet (laufende Chats und Code-Sitzungen werden gestoppt), danach öffnet sich Claude Desktop für {{name}}.",
+      "quitConfirm": "Beenden und öffnen",
+      "firstLoginMessage": "Dieses Konto wird zum ersten Mal geöffnet: Melde dich im geöffneten Desktop bei {{login}} an. Die Anmeldung bleibt im eigenen Datenordner dieses Kontos, sodass ein Wechsel zu dieser Karte ab dann dieses Konto verwendet.",
+      "firstLoginConfirm": "Öffnen und anmelden"
     }
   },
   "notifications": {
@@ -4606,7 +4619,8 @@
       "more": "Weitere Aktionen für {{name}}",
       "moveUp": "{{name}} nach oben",
       "moveDown": "{{name}} nach unten",
-      "openTerminal": "Terminal mit {{name}} öffnen"
+      "openTerminal": "Terminal mit {{name}} öffnen",
+      "openDesktop": "Claude Desktop für dieses Konto öffnen"
     },
     "chip": {
       "official": "Offiziell",
@@ -5221,7 +5235,7 @@
       "workbuddyHelp": "Die offizielle Anmeldung der WorkBuddy-Desktop-App. CC Switch kann sich nicht für Sie bei WorkBuddy anmelden; es kann nur das Konto speichern, mit dem WorkBuddy angemeldet ist (ein Snapshot seiner Anmeldedateien). Um das Konto zu wechseln, wählen Sie im …-Menü des Kontos „WorkBuddy auf dieses Konto umstellen“ oder fügen Sie in der Anbieterliste die damit verknüpfte Karte „WorkBuddy Official Sign-in“ hinzu (es wird jeweils nur eine offizielle Karte hinzugefügt). Snapshots funktionieren nur auf diesem Computer und werden nicht synchronisiert.",
       "claudeHelpTerminal": "Offizielle Claude-Code-Abonnementkonten (Pro / Max / Team). Der Claude-Konfigurationsordner ist in den Optionen überschrieben, daher ändert der Kartenwechsel die Anmeldung von Claude Code nicht. Wählen Sie ein Konto auf einer offiziellen Karte und verwenden Sie „Terminal öffnen“ auf der Karte.",
       "claudeHelpWsl": "Offizielle Claude-Code-Abonnementkonten (Pro / Max / Team). Wird noch nicht unterstützt, solange der Claude-Konfigurationsordner in WSL liegt.",
-      "claudeHelp": "Offizielle Claude-Code-Abonnementkonten (Pro / Max / Team). Wählen Sie ein Konto auf einer offiziellen Claude-Karte: Nach dem Wechsel zur Karte ändert sich die Anmeldung von Claude Code sofort auf dieses Konto. Um mehrere Konten gleichzeitig zu nutzen, verwenden Sie „Terminal öffnen“ auf der Karte. Anmelde-Token bleiben auf diesem Computer und werden nie hochgeladen, erneuert oder abgemeldet. Beim ersten Wechsel wird das Konto gespeichert, mit dem Claude Code gerade angemeldet ist; der Wechsel beendet Remote Control und baut den Prompt-Cache neu auf."
+      "claudeHelp": "Offizielle Claude-Code-Abonnementkonten (Pro / Max / Team). Wählen Sie ein Konto auf einer offiziellen Claude-Karte: Nach dem Wechsel zur Karte ändert sich die Anmeldung von Claude Code sofort auf dieses Konto. Um mehrere Konten gleichzeitig zu nutzen, verwenden Sie „Terminal öffnen“ auf der Karte. Anmelde-Token bleiben auf diesem Computer und werden nie hochgeladen, erneuert oder abgemeldet. Beim ersten Wechsel wird das Konto gespeichert, mit dem Claude Code gerade angemeldet ist; der Wechsel beendet Remote Control und baut den Prompt-Cache neu auf. Unter macOS können auch offizielle Claude-Desktop-Karten diese Konten auswählen: Beim Wechsel zu einer solchen Karte nutzt Desktop ein eigenes Fenster für dieses Konto, das die Nutzungslimits des Kontos mit Claude Code teilt."
     },
     "addAccount": "Konto hinzufügen",
     "accountMenu": "Weitere Aktionen für {{login}}",

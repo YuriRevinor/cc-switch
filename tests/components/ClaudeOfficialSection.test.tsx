@@ -327,6 +327,29 @@ describe("ClaudeOfficialSection", () => {
     expect(onChange).toHaveBeenCalledWith("work:org");
   });
 
+  it("leaves out the follow-sign-in choice when the card must keep an account", async () => {
+    // Desktop 的账号卡编辑时只能换号：去掉账号就成了切不过去的卡
+    Element.prototype.scrollIntoView = vi.fn();
+    const user = userEvent.setup();
+    mocks.useManagedAuth.mockReturnValue(baseAuth());
+    mocks.getStatus.mockResolvedValue({
+      accounts: [account("work:org", "work@example.com")],
+    });
+    withQuery(
+      <ClaudeAccountSelect
+        client="desktop"
+        value="work:org"
+        onChange={vi.fn()}
+        allowFollow={false}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "登录方式" }));
+    expect(
+      (await screen.findAllByRole("option")).map((el) => el.textContent),
+    ).toEqual(["work@example.com"]);
+  });
+
   it("points to Open Terminal when a config dir override blocks switching", async () => {
     mocks.getLoginSwitch.mockResolvedValue(
       loginSwitch({ blocked: "overrideDir" }),

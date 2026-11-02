@@ -7478,7 +7478,8 @@ impl ProviderService {
             Err(error @ AppError::Localized { key, .. })
                 if *key == "switch.official_blocked_by_proxy"
                     || *key == "agy.switch.unsupported"
-                    || *key == "copilot.switch.unsupported" =>
+                    || *key == "copilot.switch.unsupported"
+                    || *key == "claude_desktop.switch.account_unsupported" =>
             {
                 log::info!("[SWITCH] {app} 拒绝切到 {id}: {error}");
             }
@@ -7538,6 +7539,19 @@ impl ProviderService {
 
         if Self::is_codebuddy_official(&app_type, _provider) {
             return Err(Self::codebuddy_official_not_a_model());
+        }
+
+        // 绑了 Claude 账号的 Desktop 官方卡要用这个号的数据目录打开 Desktop，目前只有 macOS 上做得到
+        // （见 claude_desktop_account）
+        if app_type == AppType::ClaudeDesktop
+            && crate::services::claude_desktop_account::is_account_card(_provider)
+            && !crate::services::claude_desktop_account::supported()
+        {
+            return Err(AppError::localized(
+                "claude_desktop.switch.account_unsupported",
+                "绑了 Claude 账号的 Claude Desktop 卡目前只支持 macOS 上的 Claude Desktop（装在「应用程序」文件夹里）",
+                "Claude Desktop cards bound to a Claude account only work with Claude Desktop on macOS (installed in Applications) for now",
+            ));
         }
 
         if app_type == AppType::Dsh {

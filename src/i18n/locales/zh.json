@@ -266,7 +266,10 @@
           "team": "Team",
           "teamPremium": "Team 高级席位",
           "enterprise": "Enterprise"
-        }
+        },
+        "desktopDefault": "跟随 Desktop 当前登录",
+        "desktopDefaultDescription": "用原来的 Desktop 数据目录",
+        "desktopHelp": "选了账号就是一张账号卡：和别的卡一样「切换」，切过去后 CC Switch 用这个号单独的 Desktop 数据目录打开 Desktop（别的 Desktop 开着时先确认退出）。第一次切过去时在 Desktop 里登录一次这个号。不选账号就是原来那张默认官方卡，跟随 Desktop 默认数据目录登的号。"
       },
       "grokAccount": {
         "default": "跟随 Grok CLI 登录",
@@ -348,6 +351,16 @@
         "active": "Claude Desktop 本地路由已开启 - {{address}}:{{port}}",
         "inactive": "开启 Claude Desktop 本地路由，用于需要模型映射或格式转换的供应商。当前配置地址：{{address}}:{{port}}"
       }
+    },
+    "launch": {
+      "opened": "已用「{{name}}」打开 Claude Desktop",
+      "openedForLogin": "已打开新的 Claude Desktop 窗口，请在里面登录 {{login}}",
+      "failed": "打开 Claude Desktop 失败：{{detail}}",
+      "confirmTitle": "用「{{name}}」打开 Claude Desktop",
+      "quitMessage": "会先退出正在运行的 Claude Desktop（进行中的对话和 Code 会话会中断），再打开「{{name}}」的 Claude Desktop。",
+      "quitConfirm": "退出并打开",
+      "firstLoginMessage": "这是第一次用这个账号打开：在打开的 Desktop 里登录 {{login}}，登录保存在这个账号单独的数据目录里，以后切到这张卡就是这个号。",
+      "firstLoginConfirm": "打开并登录"
     }
   },
   "notifications": {
@@ -4606,7 +4619,8 @@
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
       "moveDown": "{{name}} 下移一位",
-      "openTerminal": "用 {{name}} 打开终端"
+      "openTerminal": "用 {{name}} 打开终端",
+      "openDesktop": "打开这个号的 Claude Desktop"
     },
     "chip": {
       "official": "官方",
@@ -5221,7 +5235,7 @@
       "workbuddyHelp": "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在账号的「…」里选「切换 WorkBuddy 到这个账号」，或在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。",
       "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
       "claudeHelpWsl": "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里时暂不支持，后续会跟进。",
-      "claudeHelp": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。"
+      "claudeHelp": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。macOS 上的 Claude Desktop 官方卡也能选这里的账号，切到那张卡时 Desktop 换成这个号单独的窗口，额度和 Claude Code 共用。"
     },
     "addAccount": "添加账号",
     "accountMenu": "{{login}} 的更多操作",

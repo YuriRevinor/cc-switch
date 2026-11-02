@@ -44,6 +44,8 @@ interface ManagedAccountSelectProps {
   labels: ManagedAccountSelectLabels;
   /** 选择框下面的说明 */
   help: React.ReactNode;
+  /** 列不列「跟随登录」一项（默认列） */
+  allowFollow?: boolean;
 }
 
 /**
@@ -57,6 +59,7 @@ export function ManagedAccountSelect({
   onManageAccounts,
   labels,
   help,
+  allowFollow = true,
 }: ManagedAccountSelectProps) {
   const { t } = useTranslation();
   const { data } = useManagedAccounts(authProvider);
@@ -163,20 +166,23 @@ export function ManagedAccountSelect({
               </div>
             </SelectItem>
           )}
-          {(accounts.length > 0 || missing || onManageAccounts) && (
-            <SelectSeparator className="my-1.5 bg-border" />
+          {allowFollow &&
+            (accounts.length > 0 || missing || onManageAccounts) && (
+              <SelectSeparator className="my-1.5 bg-border" />
+            )}
+          {allowFollow && (
+            <SelectItem value={DEFAULT_LOGIN} className={itemClass}>
+              <div className="flex min-w-0 items-center gap-2">
+                <span aria-hidden className="h-4 w-4 shrink-0" />
+                <span className="shrink-0 text-sm font-medium leading-5">
+                  {labels.follow}
+                </span>
+                <span className="min-w-0 truncate text-sm leading-5 text-fg-2">
+                  {labels.followDescription}
+                </span>
+              </div>
+            </SelectItem>
           )}
-          <SelectItem value={DEFAULT_LOGIN} className={itemClass}>
-            <div className="flex min-w-0 items-center gap-2">
-              <span aria-hidden className="h-4 w-4 shrink-0" />
-              <span className="shrink-0 text-sm font-medium leading-5">
-                {labels.follow}
-              </span>
-              <span className="min-w-0 truncate text-sm leading-5 text-fg-2">
-                {labels.followDescription}
-              </span>
-            </div>
-          </SelectItem>
         </SelectContent>
       </Select>
       <p className="text-caption text-fg-2">{help}</p>

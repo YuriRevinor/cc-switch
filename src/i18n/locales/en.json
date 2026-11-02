@@ -266,7 +266,10 @@
           "team": "Team",
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
-        }
+        },
+        "desktopDefault": "Follow Desktop's current sign-in",
+        "desktopDefaultDescription": "Uses the original Desktop data folder",
+        "desktopHelp": "Picking an account makes this an account card: switch to it like any other card, and CC Switch then opens Desktop with that account's own data folder (confirming first if another Desktop is running). Sign in to the account in Desktop the first time you switch. Without an account, it's the original default official card, which follows whoever is signed in to Desktop's default data folder."
       },
       "grokAccount": {
         "default": "Follow Grok CLI sign-in",
@@ -348,6 +351,16 @@
         "active": "Claude Desktop local routing is running - {{address}}:{{port}}",
         "inactive": "Turn on Claude Desktop local routing for providers that need model mapping or format conversion. Configured address: {{address}}:{{port}}"
       }
+    },
+    "launch": {
+      "opened": "Opened Claude Desktop with {{name}}",
+      "openedForLogin": "Opened a new Claude Desktop window. Sign in to {{login}} there",
+      "failed": "Couldn't open Claude Desktop: {{detail}}",
+      "confirmTitle": "Open Claude Desktop with {{name}}",
+      "quitMessage": "The running Claude Desktop quits first (ongoing chats and Code sessions stop), then Claude Desktop opens for {{name}}.",
+      "quitConfirm": "Quit and open",
+      "firstLoginMessage": "This is the first time this account is opened: sign in to {{login}} in the Desktop that opens. The sign-in stays in this account's own data folder, so switching to this card uses this account from then on.",
+      "firstLoginConfirm": "Open and sign in"
     }
   },
   "notifications": {
@@ -4606,7 +4619,8 @@
       "more": "More actions for {{name}}",
       "moveUp": "Move {{name}} up",
       "moveDown": "Move {{name}} down",
-      "openTerminal": "Open a terminal with {{name}}"
+      "openTerminal": "Open a terminal with {{name}}",
+      "openDesktop": "Open Claude Desktop for this account"
     },
     "chip": {
       "official": "Official",
@@ -5221,7 +5235,7 @@
       "workbuddyHelp": "The official sign-in of the WorkBuddy desktop app. CC Switch can't sign in to WorkBuddy for you; it can only save the account WorkBuddy is signed in with (a snapshot of its sign-in files). To switch accounts, choose “Switch WorkBuddy to this account” in the account's … menu, or add the WorkBuddy Official Sign-in card linked to it in the provider list (only one official card is added at a time). Snapshots only work on this computer and are not synced.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
-      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache."
+      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache. On macOS, Claude Desktop official cards can pick these accounts too: switching to such a card moves Desktop to a separate window for that account, which shares the account's usage limits with Claude Code."
     },
     "addAccount": "Add account",
     "accountMenu": "More actions for {{login}}",

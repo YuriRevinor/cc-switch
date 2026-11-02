@@ -162,15 +162,16 @@ fn default_login_is(account: &str, default: &Slot, store: &dyn CredentialStore) 
         .is_some_and(|found| found.key == account)
 }
 
+fn slot_has_login(slot: &Slot) -> bool {
+    creds::read_login(store::platform_store().as_ref(), slot)
+        .ok()
+        .flatten()
+        .is_some()
+}
+
 /// 账号目录里有没有能用的登录（读凭据判断；钥匙串条目在、里面只剩 MCP 授权也算没有）。
 pub fn dir_has_login(config_dir: &Path) -> bool {
-    creds::read_login(
-        store::platform_store().as_ref(),
-        &Slot::Account(config_dir.to_path_buf()),
-    )
-    .ok()
-    .flatten()
-    .is_some()
+    slot_has_login(&Slot::Account(config_dir.to_path_buf()))
 }
 
 /// 凭据里 Claude Code 记的套餐。

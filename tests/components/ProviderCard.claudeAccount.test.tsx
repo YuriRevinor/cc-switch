@@ -68,12 +68,16 @@ const officialUsage = (enabled: boolean): Provider["meta"] => ({
   },
 });
 
-function renderCard(provider: Provider, isCurrent = false) {
+function renderCard(
+  provider: Provider,
+  isCurrent = false,
+  appId: "claude" | "claude-desktop" = "claude",
+) {
   return render(
     <QueryClientProvider client={createTestQueryClient()}>
       <ProviderCard
         provider={provider}
-        appId="claude"
+        appId={appId}
         isCurrent={isCurrent}
         presentation={{ chips: [], buttons: [] }}
         onEdit={vi.fn()}
@@ -151,6 +155,20 @@ describe("ProviderCard with a Claude official account", () => {
     renderCard(boundCard(officialUsage(false)));
     expect(claudeLineProps.mock.calls.map(([props]) => props.showPlan)).toEqual(
       [true, false],
+    );
+  });
+
+  it("shows the same account line and quota on a Claude Desktop card", () => {
+    claudeQuotaProps.mockClear();
+    claudeLineProps.mockClear();
+    renderCard(boundCard(), false, "claude-desktop");
+    expect(screen.getByText("account-line")).toBeInTheDocument();
+    expect(screen.getByText("claude-account-quota")).toBeInTheDocument();
+    expect(claudeQuotaProps).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: "work:org" }),
+    );
+    expect(claudeLineProps).toHaveBeenCalledWith(
+      expect.objectContaining({ client: "desktop", showPlan: true }),
     );
   });
 });

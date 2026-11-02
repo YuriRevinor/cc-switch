@@ -307,6 +307,16 @@ pub fn get_config_library_path() -> Result<PathBuf, AppError> {
     Ok(current_platform_paths()?.config_library_path)
 }
 
+/// Claude Desktop 自己的数据目录（`claude_desktop_config.json` 所在的 `Claude`，不是 `Claude-3p`）。
+/// 平台不支持时为 `None`；目录不一定存在。
+pub fn desktop_data_dir() -> Option<PathBuf> {
+    current_platform_paths()
+        .ok()?
+        .normal_config_path
+        .parent()
+        .map(Path::to_path_buf)
+}
+
 pub fn default_proxy_routes() -> Vec<ClaudeDesktopDefaultRoute> {
     DEFAULT_PROXY_ROUTES.to_vec()
 }
@@ -315,8 +325,11 @@ pub fn is_compatible_direct_provider(provider: &Provider) -> bool {
     validate_direct_provider(provider).is_ok()
 }
 
+/// 官方卡：原来那张固定 id 的，和绑了 Claude 账号的账号卡（见 `claude_desktop_account`）。都写回 1P、
+/// 不要地址、不经本地路由。
 pub fn is_official_provider(provider: &Provider) -> bool {
     provider.id == CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID
+        || crate::services::claude_desktop_account::is_account_card(provider)
 }
 
 /// 这张卡在直连模式下写不进去，要经本地路由：模型映射卡（上游模型名 Desktop 不认）、托管
@@ -1537,6 +1550,14 @@ fn detect_installed(paths: &ClaudeDesktopPaths, app_bundles: Option<&[PathBuf]>)
         Some(bundles) => bundles.iter().any(|bundle| bundle.is_dir()),
         None => paths.normal_config_path.parent().is_some_and(Path::is_dir),
     }
+}
+
+/// 本机的 `Claude.app`（只认 macOS 的两个标准位置）；没装时为 `None`。
+pub fn macos_app_bundle() -> Option<PathBuf> {
+    macos_app_bundle_candidates()
+        .into_iter()
+        .flatten()
+        .find(|bundle| bundle.is_dir())
 }
 
 fn macos_app_bundle_candidates() -> Option<Vec<PathBuf>> {
@@ -3180,6 +3201,23 @@ mod tests {
         let profile: Value = read_json_file(&paths.profile_path).expect("profile is kept");
         assert!(profile.get("inferenceGatewayApiKey").is_none());
         assert!(meta.get("appliedId").is_none());
+    }
+
+    #[test]
+    fn claude_desktop_account_cards_count_as_official() {
+        // 绑了 Claude 账号、没有地址的官方卡：切过去写回 1P，不能当成缺地址的第三方
+        let mut account = official_provider();
+        account.id = "desktop-personal".to_string();
+        account.meta = Some(
+            serde_json::from_value(json!({ "authBinding": {
+                "source": "managed_account",
+                "authProvider": "claude_official",
+                "accountId": "aaaaaaaa-0000-4000-8000-000000000001:org",
+            }}))
+            .expect("meta"),
+        );
+        assert!(validate_provider(&account).is_ok());
+        assert!(direct_target(Some(&account)).expect("target").is_none());
     }
 
     #[test]

@@ -515,6 +515,10 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/claude_account_submit_paste`, () =>
     success(null),
   ),
+  // Claude Desktop 用 Claude 账号：默认当作不支持的平台（卡片照旧是「切换」）
+  http.post(`${TAURI_ENDPOINT}/get_claude_desktop_profiles`, () =>
+    success({ supported: false, defaultRunning: false, profiles: [] }),
+  ),
   http.post(`${TAURI_ENDPOINT}/get_claude_login_switch`, () =>
     success({
       active: true,

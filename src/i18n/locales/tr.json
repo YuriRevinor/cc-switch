@@ -266,7 +266,10 @@
           "team": "Team",
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
-        }
+        },
+        "desktopDefault": "Desktop'taki mevcut oturumu izle",
+        "desktopDefaultDescription": "Orijinal Desktop veri klasörünü kullanır",
+        "desktopHelp": "Bir hesap seçmek bunu bir hesap kartı yapar: diğer kartlar gibi geçiş yapın, CC Switch de Desktop'ı bu hesabın kendi veri klasörüyle açar (başka bir Desktop çalışıyorsa önce onay ister). İlk geçişte Desktop'ta bu hesapla bir kez oturum açın. Hesap seçilmezse, Desktop'ın varsayılan veri klasöründe oturum açmış hesabı izleyen orijinal varsayılan resmi karttır."
       },
       "grokAccount": {
         "default": "Grok CLI oturumunu kullan",
@@ -348,6 +351,16 @@
         "active": "Claude Desktop yerel yönlendirme çalışıyor - {{address}}:{{port}}",
         "inactive": "Model eşlemeye veya biçim dönüştürmeye ihtiyaç duyan sağlayıcılar için Claude Desktop yerel yönlendirmeyi açın. Yapılandırılmış adres: {{address}}:{{port}}"
       }
+    },
+    "launch": {
+      "opened": "Claude Desktop {{name}} ile açıldı",
+      "openedForLogin": "Yeni bir Claude Desktop penceresi açıldı. Orada {{login}} ile oturum açın",
+      "failed": "Claude Desktop açılamadı: {{detail}}",
+      "confirmTitle": "Claude Desktop'ı {{name}} ile aç",
+      "quitMessage": "Önce çalışan Claude Desktop kapatılır (süren sohbetler ve Code oturumları durur), ardından Claude Desktop {{name}} için açılır.",
+      "quitConfirm": "Kapat ve aç",
+      "firstLoginMessage": "Bu hesap ilk kez açılıyor: açılan Desktop'ta {{login}} ile oturum açın. Oturum bu hesabın kendi veri klasöründe kalır; bundan sonra bu karta geçmek bu hesabı kullanır.",
+      "firstLoginConfirm": "Aç ve oturum aç"
     }
   },
   "notifications": {
@@ -4535,7 +4548,8 @@
       "more": "{{name}} için diğer işlemler",
       "moveUp": "{{name}}'yi yukarı taşı",
       "moveDown": "{{name}}'yi aşağı taşı",
-      "openTerminal": "Open a terminal with {{name}}"
+      "openTerminal": "Open a terminal with {{name}}",
+      "openDesktop": "Bu hesap için Claude Desktop'ı aç"
     },
     "chip": {
       "official": "Resmi",
@@ -5149,7 +5163,7 @@
       "codebuddyHelp": "CodeBuddy'un resmi oturumu (Çin ve uluslararası siteler). Hesap değiştirmek için hesabın … menüsünden \"CodeBuddy için bu hesaba geç\" seçeneğini kullanın ya da sağlayıcı listesinde bu hesaba bağlı \"CodeBuddy Resmi Oturum\" kartını ekleyin. \"Hesap ekle\" codebuddy'yi bir terminalde açar ve bitince hesabı buraya ekler; CodeBuddy zaten oturum açmışsa oturum geçici olarak kapatılır, vazgeçerseniz geri yüklenebilir. Belirteçleri CodeBuddy kendisi yeniler.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
-      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache.",
+      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache. macOS'ta Claude Desktop resmi kartları da bu hesapları seçebilir: böyle bir karta geçildiğinde Desktop bu hesap için ayrı bir pencereye geçer ve kullanım limitlerini Claude Code ile paylaşır.",
       "workbuddyHelp": "WorkBuddy masaüstü uygulamasının resmi oturumu. CC Switch sizin yerinize WorkBuddy'de oturum açamaz; yalnızca WorkBuddy'nin oturum açtığı hesabı (oturum dosyalarının anlık görüntüsü) kaydedebilir. Hesap değiştirmek için hesabın … menüsünden “WorkBuddy için bu hesaba geç” seçeneğini kullanın ya da sağlayıcı listesinde bu hesaba bağlı WorkBuddy Resmi Oturum kartını ekleyin (aynı anda yalnızca bir resmi kart eklenmiş olur). Anlık görüntüler yalnızca bu bilgisayarda çalışır ve senkronize edilmez."
     },
     "addAccount": "Hesap ekle",

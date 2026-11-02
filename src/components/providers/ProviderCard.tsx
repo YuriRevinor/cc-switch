@@ -26,6 +26,11 @@ import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
 import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOfficialSection";
 import { GrokBoundAccountLine } from "@/components/providers/forms/GrokOfficialAccount";
+import {
+  CLAUDE_DESKTOP_OFFICIAL_ID,
+  desktopAccountKey,
+} from "@/lib/api/claudeDesktopAccounts";
+import { useClaudeDesktopProfiles } from "@/lib/query/claudeDesktop";
 import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import { claudePlanLabel } from "@/lib/claudePlan";
 import {
@@ -334,12 +339,25 @@ export function ProviderCard({
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
   const isOfficial = isOfficialProvider(provider, appId);
-  // Claude 官方卡绑了 Claude 官方账号：副标题写账号，额度按这个号查
+  // Claude Code / Claude Desktop 官方卡绑了 Claude 官方账号：副标题写账号，额度按这个号查
+  // （同一个订阅，Claude Code、Desktop 共用额度）
+  // Claude Desktop 原来那张官方卡没绑号，按 Desktop 现在登的号认（号在授权中心里时）
+  const isDesktopDefaultCard =
+    appId === "claude-desktop" &&
+    isOfficial &&
+    provider.id === CLAUDE_DESKTOP_OFFICIAL_ID;
+  const { data: desktopProfiles } =
+    useClaudeDesktopProfiles(isDesktopDefaultCard);
+  const desktopDefaultAccountKey = isDesktopDefaultCard
+    ? (desktopProfiles?.defaultAccountKey ?? null)
+    : null;
   const claudeBoundAccountId =
     appId === "claude" && isOfficial
       ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
         null
-      : null;
+      : appId === "claude-desktop"
+        ? (desktopAccountKey(provider) ?? desktopDefaultAccountKey)
+        : null;
   // Grok 官方卡绑了授权中心的 xAI 账号：额度按这个号查，和 xai_oauth 卡同一份缓存
   const grokBoundAccountId =
     appId === "grokbuild" && isOfficial
@@ -766,6 +784,7 @@ export function ProviderCard({
               providerName={provider.name}
               note={manualNote}
               showPlan={usageEnabled}
+              client={appId === "claude-desktop" ? "desktop" : "code"}
             />
           ) : agyModel || agyAccount ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">

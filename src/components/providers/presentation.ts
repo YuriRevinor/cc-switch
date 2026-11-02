@@ -161,6 +161,14 @@ export interface SwitchModeInput {
     stackRemove: (provider: Provider) => void;
     stackSetDefault: (provider: Provider) => void;
   };
+  /**
+   * Claude Desktop：使用中的账号卡（绑了 Claude 账号的官方卡）「更多」里有「打开 Claude Desktop」，
+   * 用这个号的数据目录打开（从程序坞打开的是默认数据目录，不是这个号）。
+   */
+  desktopOpen?: {
+    canOpen: (provider: Provider) => boolean;
+    open: (provider: Provider) => void;
+  };
 }
 
 export function buildSwitchSections(input: SwitchModeInput): ProviderSection[] {
@@ -263,6 +271,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
           const chips = base(p);
           if (active === "direct") {
             if (p.id === directId) {
+              const desktopOpen = input.desktopOpen;
               return {
                 provider: p,
                 presentation: {
@@ -273,6 +282,15 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
                   },
                   chips,
                   buttons: [],
+                  menuItems: desktopOpen?.canOpen(p)
+                    ? [
+                        {
+                          key: "openDesktop",
+                          label: t("providerCard.action.openDesktop"),
+                          onSelect: () => desktopOpen.open(p),
+                        },
+                      ]
+                    : undefined,
                 },
               };
             }

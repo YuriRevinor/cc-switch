@@ -9,8 +9,11 @@ import { APP_IDS } from "@/config/appSpecs";
 export interface TrayNavigation {
   app?: AppId;
   section?: SettingsSection;
-  /** `needsRoute`：弹「需要路由」对话框；`add`：开始添加供应商 */
-  intent?: "needsRoute" | "add";
+  /**
+   * `needsRoute`：弹「需要路由」对话框；`desktopSwitch`：切换 Claude Desktop 的卡（要换 Desktop，
+   * 可能要确认退出）；`add`：开始添加供应商
+   */
+  intent?: "needsRoute" | "desktopSwitch" | "add";
   providerId?: string;
 }
 
@@ -30,10 +33,16 @@ export function parseTrayNavigation(
   const app = APP_IDS.find((id) => id === raw.app);
   if (!app) return null;
   const intent =
-    raw.intent === "needsRoute" || raw.intent === "add"
+    raw.intent === "needsRoute" ||
+    raw.intent === "desktopSwitch" ||
+    raw.intent === "add"
       ? raw.intent
       : undefined;
-  if (intent === "needsRoute" && !raw.providerId) return { app };
+  if (
+    (intent === "needsRoute" || intent === "desktopSwitch") &&
+    !raw.providerId
+  )
+    return { app };
   return { app, intent, providerId: raw.providerId };
 }
 

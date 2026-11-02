@@ -11,7 +11,7 @@
 
 每张绑了账号的卡片还会显示这个号的套餐和剩余额度。
 
-> ⚠️ **只支持 Claude Code CLI 和 IDE 插件（VS Code、JetBrains 等），不支持 Claude Desktop，不支持 WSL 环境（后续会做）。** Claude Desktop 的聊天和 Code 标签页用的是它自己的登录，不读 Claude Code 的凭据。在 CC Switch 里切卡、打开终端，都不会改变 Claude Desktop 登录的账号。后续如果 Anthropic 放松相关限制，CC Switch 会跟进。
+> ⚠️ **切卡即切号、打开终端只作用于 Claude Code CLI 和 IDE 插件（VS Code、JetBrains 等），不支持 WSL 环境（后续会做）。** Claude Desktop 的聊天和 Code 标签页用的是它自己的登录，不读 Claude Code 的凭据，在 CC Switch 里切 Claude Code 的卡不会改变 Desktop 登录的账号。macOS 上的 Claude Desktop 另有一套用法：给每个账号一个独立的 Desktop 数据目录，切到账号卡时 Desktop 换成这个号，见下面的「5. Claude Desktop（macOS）」。
 
 ## 大家最关心的合规问题
 
@@ -42,6 +42,8 @@ Anthropic 官方本身就支持一个人使用多个账号，[认证文档](http
 
 - **「打开终端」**：和官方文档教的 `CLAUDE_CONFIG_DIR` 方法完全一致，只是 CC Switch 替你建了目录、开了终端。
 - **「切卡即切号」**：为了让 IDE 插件和脚本也能换号，切卡时会在本机 Claude Code 的存储位置之间移动登录，令牌不离开本机，官方文档没有专门讲到这种用法，目前还没有收到因此被封号的反馈。
+
+- **Claude Desktop 的账号卡**：Desktop 没有 `CLAUDE_CONFIG_DIR`，CC Switch 用 Electron 的启动参数 `--user-data-dir` 给每个账号一个独立的 Desktop 数据目录。登录在 Desktop 自己的登录页完成，由 Desktop 加密保存在这个目录里，CC Switch 不读取、不移动。这个启动参数不是 Anthropic 公开支持的用法，以后的 Desktop 版本可能不再认它。
 
 如果只想用官方写明的方式，可以给账号建卡但不「启用」它们，只用卡片上的「打开终端」。条款可能更新，请以 Anthropic 的最新说明为准。
 
@@ -111,6 +113,26 @@ Claude Code 里现在登着的号不用专门添加，第一次切换时会自�
 
 终端用哪个应用（系统终端、iTerm2、Ghostty 等），在「设置 → 通用 → 窗口与终端」里设置。
 
+### 5. Claude Desktop（macOS）
+
+Claude Desktop 也能用授权中心里的这些账号，每个账号用一个独立的 Desktop 数据目录：
+
+1. 在 Claude Desktop 页点「添加供应商」，选 `Claude Desktop Official`，在「登录方式」里选一个授权中心里的 Claude 账号，保存后就多了一张**账号卡**。卡片副行显示账号和套餐，右侧显示额度，和 Claude Code 的官方卡一样（同一个订阅，额度共用）。一个账号建一张。
+2. 账号卡和别的卡一样点「切换」，切过去它就是「使用中」，CC Switch 随后用这个账号单独的 Desktop 数据目录打开 Desktop。托盘里点账号卡也一样，会打开主窗口走同一个确认。
+3. 同一时间只开一个 Desktop：还有别的 Desktop 开着时会先弹框确认，同意后才切换，CC Switch 先退出它（进行中的对话和 Code 会话会中断），再打开这个号；取消就什么都不变。
+4. 第一次切过去时目录是空的，确认框里会说明，打开后在 Desktop 自己的登录页登录这个号；之后再切过来就直接是这个号。
+5. 原来那张 `Claude Desktop Official` 卡不变，代表默认数据目录里 Desktop 自己的登录（从 Dock 打开的那个），不能选账号。Desktop 现在登的号如果也在授权中心里，这张卡会自动显示这个号、套餐和额度（托盘里也一样），换号后跟着变。从账号卡切回这张卡（或切到第三方供应商）时，如果账号卡的 Desktop 还开着，也会先确认退出它，再打开默认的 Desktop。
+6. 账号绑的号正好是默认数据目录登的号时，这张账号卡直接用默认数据目录，和原来那张卡是同一个 Desktop，不用重复建。
+
+Desktop 的 Code 标签页按账号分开列会话，换号后只显示当前账号的，对话内容其实都在本机 `~/.claude/projects/`。切换时 CC Switch 会在打开 Desktop 前把各个账号缺的会话列表补上：只新增、不覆盖不删除，正在运行的 Desktop 不碰，补了哪些记在 CC Switch 的日志里。
+
+几点说明：
+
+- 每个账号的 Desktop 数据目录在 `~/Library/Application Support/com.ccswitch.desktop/claude-desktop-accounts/` 下，里面的 Desktop 设置（MCP、扩展等）各自独立。从授权中心删掉账号不会删这个目录，再加回来还能接着用。
+- 额度是用这个账号在授权中心里的 Claude Code 登录查的；那份登录过期时，额度处会提示重新登录，不影响 Desktop 本身。
+- 直接从 Dock 打开的总是默认数据目录的 Desktop。账号卡在使用中、Desktop 被关掉以后，要再打开这个号，用卡片「⋯」里的「打开这个号的 Claude Desktop」。
+- 目前只支持 macOS。
+
 ## 常见问题
 
 **提示「需要重新登录」？**
@@ -123,7 +145,7 @@ Claude Code 里现在登着的号不用专门添加，第一次切换时会自�
 不能。路由和聚合模式意味着请求需要在本地网关进行转发，这会给用户的账号带来封禁风险。CC Switch 不愿意把这部分风险交由用户承担。合规、稳定、原生配置优先，这是 CC Switch 的设计理念，即使这样会带来一系列的复杂度。
 
 **Claude Desktop 能这样切号吗？**
-不能。见开头的说明：Claude Desktop 用的是它自己的登录，这个功能只作用于 Claude Code CLI 和 IDE 插件。要在 Claude Desktop 里换号，请在 Claude Desktop 里退出再登录。
+macOS 上可以，但做法和 Claude Code 不同：Claude Desktop 用的是它自己的登录，CC Switch 不换它的登录，而是给每个账号一个独立的 Desktop 数据目录。给每个账号建一张账号卡，切过去 Desktop 就换成那个号的，见「5. Claude Desktop（macOS）」。其他平台要在 Claude Desktop 里退出再登录。
 
 ## 参考
 

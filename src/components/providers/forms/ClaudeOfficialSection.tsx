@@ -259,7 +259,7 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
               })
             : t("authCenter.group.claudeHelp", {
                 defaultValue:
-                  "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。",
+                  "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。macOS 上的 Claude Desktop 官方卡也能选这里的账号，切到那张卡时 Desktop 换成这个号单独的窗口，额度和 Claude Code 共用。",
               })
       }
       helpSide={helpSide}
@@ -332,56 +332,88 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
   );
 };
 
+/**
+ * 账号用在哪个客户端：Claude Code 官方卡（切卡换登录），或 Claude Desktop 官方卡（切过去后用这个号
+ * 单独的 Desktop 数据目录打开 Desktop，见后端 `claude_desktop_account`）。
+ */
+export type ClaudeAccountClient = "code" | "desktop";
+
 interface ClaudeAccountSelectProps {
   value: string | null;
   onChange: (accountId: string | null) => void;
   /** 打开授权中心添加或管理账号 */
   onManageAccounts?: () => void;
+  client?: ClaudeAccountClient;
+  /**
+   * 列不列「跟随登录」。编辑 Desktop 的账号卡时不列：原来那张默认官方卡只有一张，账号卡去掉账号
+   * 就成了一张既不是默认卡、又没有地址的卡，切不过去
+   */
+  allowFollow?: boolean;
 }
 
 /**
  * Claude 官方卡的登录方式，和 Codex 官方卡同一套写法：托管的账号在上，「添加或管理」打开授权
- * 中心，最下面是跟随 Claude Code 登录（~/.claude，不绑号）。
+ * 中心，最下面是跟随客户端自己的登录（Claude Code 的 ~/.claude、Desktop 原来的数据目录，不绑号）。
  */
 export function ClaudeAccountSelect({
   value,
   onChange,
   onManageAccounts,
+  client = "code",
+  allowFollow = true,
 }: ClaudeAccountSelectProps) {
   const { t } = useTranslation();
-  const blocked = useClaudeLoginBlocked();
+  const codeBlocked = useClaudeLoginBlocked();
+  // WSL、配置目录覆盖只影响 Claude Code 的登录切换
+  const blocked = client === "code" ? codeBlocked : null;
   return (
     <ManagedAccountSelect
       authProvider="claude_official"
       value={value}
       onChange={(accountId) => onChange(accountId)}
       onManageAccounts={onManageAccounts}
+      allowFollow={allowFollow}
       labels={{
-        follow: t("provider.form.claudeAccount.default", {
-          defaultValue: "跟随 Claude Code 登录",
-        }),
-        followDescription: t("provider.form.claudeAccount.defaultDescription", {
-          defaultValue: "账号会随 Claude Code 当前登录变化",
-        }),
+        follow:
+          client === "desktop"
+            ? t("provider.form.claudeAccount.desktopDefault", {
+                defaultValue: "跟随 Desktop 当前登录",
+              })
+            : t("provider.form.claudeAccount.default", {
+                defaultValue: "跟随 Claude Code 登录",
+              }),
+        followDescription:
+          client === "desktop"
+            ? t("provider.form.claudeAccount.desktopDefaultDescription", {
+                defaultValue: "用原来的 Desktop 数据目录",
+              })
+            : t("provider.form.claudeAccount.defaultDescription", {
+                defaultValue: "账号会随 Claude Code 当前登录变化",
+              }),
         manage: t("provider.form.claudeAccount.manage", {
           defaultValue: "添加或管理 Claude 账号",
         }),
       }}
       help={
-        blocked === "wsl"
-          ? t("provider.form.claudeAccount.helpWsl", {
+        client === "desktop"
+          ? t("provider.form.claudeAccount.desktopHelp", {
               defaultValue:
-                "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
+                "选了账号就是一张账号卡：和别的卡一样「切换」，切过去后 CC Switch 用这个号单独的 Desktop 数据目录打开 Desktop（别的 Desktop 开着时先确认退出）。第一次切过去时在 Desktop 里登录一次这个号。不选账号就是原来那张默认官方卡，跟随 Desktop 默认数据目录登的号。",
             })
-          : blocked === "overrideDir"
-            ? t("provider.form.claudeAccount.helpTerminal", {
+          : blocked === "wsl"
+            ? t("provider.form.claudeAccount.helpWsl", {
                 defaultValue:
-                  "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
+                  "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
               })
-            : t("provider.form.claudeAccount.help", {
-                defaultValue:
-                  "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
-              })
+            : blocked === "overrideDir"
+              ? t("provider.form.claudeAccount.helpTerminal", {
+                  defaultValue:
+                    "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
+                })
+              : t("provider.form.claudeAccount.help", {
+                  defaultValue:
+                    "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
+                })
       }
     />
   );
@@ -397,15 +429,18 @@ export function ClaudeBoundAccountLine({
   providerName,
   note,
   showPlan = false,
+  client = "code",
 }: {
   accountId: string;
   providerName: string;
   note?: string;
   /** 卡片开了额度查询时才写套餐 */
   showPlan?: boolean;
+  client?: ClaudeAccountClient;
 }) {
   const { t } = useTranslation();
-  const blocked = useClaudeLoginBlocked();
+  const codeBlocked = useClaudeLoginBlocked();
+  const blocked = client === "code" ? codeBlocked : null;
   return (
     <ManagedBoundAccountLine
       authProvider="claude_official"
@@ -416,6 +451,8 @@ export function ClaudeBoundAccountLine({
         defaultValue: "Claude 账号",
       })}
       needsReauth={(account) => {
+        // Desktop 卡用的是 Desktop 自己的登录；Claude Code 的登录过期只影响查额度，额度那里会提示
+        if (client !== "code") return false;
         const expiresAt = account.login_expires_at ?? null;
         return (
           account.requires_reauth ||

@@ -102,7 +102,10 @@ import {
   useToolUpdatesAvailable,
 } from "@/components/apps/useToolManagement";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
-import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
+import {
+  SwitchModePanel,
+  type TrayProviderRequest,
+} from "@/components/providers/mode/SwitchModePanel";
 import { proxyApi } from "@/lib/api/proxy";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
@@ -267,12 +270,11 @@ function App() {
     (app: AppId, view: AppMode) => setProviderModeView({ app, view }),
     [],
   );
-  // 托盘里点了直连下需要路由的那家：打开应用页后弹「需要路由」对话框
-  const [trayNeedsRoute, setTrayNeedsRoute] = useState<{
-    app: AppId;
-    providerId: string;
-    nonce: number;
-  } | null>(null);
+  // 托盘交过来的切换（直连下点了需要路由的那家、Claude Desktop 要换 Desktop 的）：打开应用页后弹
+  // 同样的确认
+  const [trayRequest, setTrayRequest] = useState<
+    (TrayProviderRequest & { app: AppId }) | null
+  >(null);
   const [mcpManagementBusy, setMcpManagementBusy] = useState(false);
   const [skillsNavigationBusy, setSkillsNavigationBusy] = useState(false);
   const [promptNavigationBusy, setPromptNavigationBusy] = useState(false);
@@ -1009,9 +1011,14 @@ function App() {
       selectApp(navigation.app);
       // 托盘先换应用：新应用那格还没报上来，按它实际生效的模式
       if (navigation.intent === "add") openAddProvider(undefined);
-      if (navigation.intent === "needsRoute" && navigation.providerId) {
-        setTrayNeedsRoute({
+      if (
+        (navigation.intent === "needsRoute" ||
+          navigation.intent === "desktopSwitch") &&
+        navigation.providerId
+      ) {
+        setTrayRequest({
           app: navigation.app,
+          intent: navigation.intent,
           providerId: navigation.providerId,
           nonce: Date.now(),
         });
@@ -1684,10 +1691,8 @@ function App() {
           scrollRef={providerScrollContainerRef}
           onSwitch={switchProvider}
           onOpenRoutingSettings={() => openSettings("routing")}
-          needsRouteRequest={
-            trayNeedsRoute?.app === modeAppId ? trayNeedsRoute : undefined
-          }
-          onNeedsRouteHandled={() => setTrayNeedsRoute(null)}
+          trayRequest={trayRequest?.app === modeAppId ? trayRequest : undefined}
+          onTrayRequestHandled={() => setTrayRequest(null)}
           onViewChange={handleProviderModeViewChange}
           startupFailure={startupFailure}
           onDismissStartupFailure={() =>

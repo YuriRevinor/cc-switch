@@ -266,7 +266,10 @@
           "team": "Team",
           "teamPremium": "Team プレミアム",
           "enterprise": "Enterprise"
-        }
+        },
+        "desktopDefault": "Desktop の現在のログインに従う",
+        "desktopDefaultDescription": "元の Desktop データフォルダーを使用",
+        "desktopHelp": "アカウントを選ぶとアカウントカードになります：ほかのカードと同じく「切り替え」、切り替えると CC Switch がそのアカウント専用の Desktop データフォルダで Desktop を開きます（ほかの Desktop が起動中なら先に終了を確認）。最初に切り替えたとき Desktop でこのアカウントに一度サインインします。アカウントを選ばなければ元のデフォルト公式カードで、Desktop のデフォルトデータフォルダにサインインしているアカウントに従います。"
       },
       "grokAccount": {
         "default": "Grok CLI のログインに従う",
@@ -348,6 +351,16 @@
         "active": "Claude Desktop ローカルルーティングは起動中です - {{address}}:{{port}}",
         "inactive": "モデルマッピングや形式変換が必要なプロバイダー向けに Claude Desktop ローカルルーティングを起動します。設定アドレス: {{address}}:{{port}}"
       }
+    },
+    "launch": {
+      "opened": "「{{name}}」で Claude Desktop を開きました",
+      "openedForLogin": "新しい Claude Desktop ウィンドウを開きました。そこで {{login}} にログインしてください",
+      "failed": "Claude Desktop を開けませんでした：{{detail}}",
+      "confirmTitle": "「{{name}}」で Claude Desktop を開く",
+      "quitMessage": "実行中の Claude Desktop を先に終了し（進行中のチャットと Code セッションは中断されます）、「{{name}}」の Claude Desktop を開きます。",
+      "quitConfirm": "終了して開く",
+      "firstLoginMessage": "このアカウントで初めて開きます：開いた Desktop で {{login}} にサインインしてください。サインインはこのアカウント専用のデータフォルダに保存され、以後このカードに切り替えるとこのアカウントになります。",
+      "firstLoginConfirm": "開いてサインイン"
     }
   },
   "notifications": {
@@ -4606,7 +4619,8 @@
       "more": "{{name}} のその他の操作",
       "moveUp": "{{name}} を上へ",
       "moveDown": "{{name}} を下へ",
-      "openTerminal": "{{name}} でターミナルを開く"
+      "openTerminal": "{{name}} でターミナルを開く",
+      "openDesktop": "このアカウントの Claude Desktop を開く"
     },
     "chip": {
       "official": "公式",
@@ -5221,7 +5235,7 @@
       "workbuddyHelp": "WorkBuddy デスクトップ版の公式ログインです。CC Switch は WorkBuddy に代わってログインできず、WorkBuddy が現在ログインしているアカウント（ログインファイル一式のスナップショット）を取り込むだけです。アカウントを切り替えるには、アカウントの「…」から「WorkBuddy をこのアカウントに切り替え」を選ぶか、プロバイダー一覧でそのアカウントを紐付けた「WorkBuddy 公式ログイン」カードを追加してください（追加済みにできる公式カードは同時に 1 枚だけです）。スナップショットはこのコンピューターでのみ有効で、クラウド同期されません。",
       "claudeHelpTerminal": "Claude Code の公式サブスクリプションアカウント（Pro / Max / Team）。設定で Claude の設定フォルダーが上書きされているため、カードを切り替えても Claude Code のログインは変わりません。公式カードでアカウントを選び、カードの「ターミナルを開く」から使ってください。",
       "claudeHelpWsl": "Claude Code の公式サブスクリプションアカウント（Pro / Max / Team）。Claude の設定フォルダーが WSL にある場合はまだ対応していません。",
-      "claudeHelp": "Claude Code の公式サブスクリプションアカウント（Pro / Max / Team）。Claude の公式カードでアカウントを選ぶと、そのカードに切り替えると Claude Code のログインがすぐにこのアカウントに変わります。複数のアカウントを同時に使うには、カードの「ターミナルを開く」を使ってください。ログイントークンはこのコンピューターから出ず、アップロード・更新・ログアウトは行いません。最初の切り替えで、Claude Code に今ログインしているアカウントを自動で保存します。切り替えると Remote Control は切断され、プロンプトキャッシュは作り直されます。"
+      "claudeHelp": "Claude Code の公式サブスクリプションアカウント（Pro / Max / Team）。Claude の公式カードでアカウントを選ぶと、そのカードに切り替えると Claude Code のログインがすぐにこのアカウントに変わります。複数のアカウントを同時に使うには、カードの「ターミナルを開く」を使ってください。ログイントークンはこのコンピューターから出ず、アップロード・更新・ログアウトは行いません。最初の切り替えで、Claude Code に今ログインしているアカウントを自動で保存します。切り替えると Remote Control は切断され、プロンプトキャッシュは作り直されます。macOS では Claude Desktop の公式カードでもここのアカウントを選べます。そのカードに切り替えると Desktop がそのアカウント専用のウィンドウに切り替わります。利用上限は Claude Code と共通です。"
     },
     "addAccount": "アカウントを追加",
     "accountMenu": "{{login}} のその他の操作",

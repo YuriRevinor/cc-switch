@@ -943,8 +943,12 @@ describe("SwitchModePanel — tray needs-route request", () => {
           onDelete={vi.fn()}
           onDuplicate={vi.fn()}
           onOpenWebsite={vi.fn()}
-          needsRouteRequest={{ providerId: "copilot", nonce: 1 }}
-          onNeedsRouteHandled={onHandled}
+          trayRequest={{
+            intent: "needsRoute",
+            providerId: "copilot",
+            nonce: 1,
+          }}
+          onTrayRequestHandled={onHandled}
         />
       </QueryClientProvider>,
     );

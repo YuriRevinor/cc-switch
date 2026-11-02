@@ -701,9 +701,7 @@ describe("useProviderActions", () => {
       wrapper,
     });
 
-    await expect(
-      result.current.switchProvider(provider),
-    ).resolves.toBeUndefined();
+    await expect(result.current.switchProvider(provider)).resolves.toBe(false);
     expect(settingsApiGetMock).not.toHaveBeenCalled();
     expect(settingsApiApplyMock).not.toHaveBeenCalled();
   });

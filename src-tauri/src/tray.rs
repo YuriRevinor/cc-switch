@@ -1089,8 +1089,12 @@ fn xai_oauth_account_id(provider: &Provider) -> Option<String> {
         })
 }
 
-/// Claude 官方卡绑了授权中心的账号（同前端 ProviderCard 的 `claudeBoundAccountId`）。
+/// Claude 官方卡绑了授权中心的账号（同前端 ProviderCard 的 `claudeBoundAccountId`）。Claude Desktop
+/// 原来那张官方卡按 Desktop 现在登的号认。
 fn claude_bound_account_id(app_type: &AppType, provider: &Provider) -> Option<String> {
+    if *app_type == AppType::ClaudeDesktop {
+        return crate::services::claude_desktop_account::card_account_key(provider);
+    }
     if *app_type != AppType::Claude || !is_official_account(app_type, provider) {
         return None;
     }
@@ -3140,7 +3144,8 @@ pub struct TrayNavigation {
     /// 设置分组（`routing`）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
-    /// `needsRoute`：弹「需要路由」对话框；`add`：开始添加供应商
+    /// `needsRoute`：弹「需要路由」对话框；`desktopSwitch`：切换 Claude Desktop 的卡（要换 Desktop，
+    /// 可能要确认退出）；`add`：开始添加供应商
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3390,12 +3395,12 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
                 }
                 emit_switched(&app_handle, &app_type, &provider_id);
             }
-            Ok(ClickOutcome::NeedsRoute) => {
+            Ok(ClickOutcome::NeedsUi(intent)) => {
                 navigate(
                     &app_handle,
                     TrayNavigation {
                         app: Some(app_type.as_str().to_string()),
-                        intent: Some("needsRoute".to_string()),
+                        intent: Some(intent.to_string()),
                         provider_id: Some(provider_id.clone()),
                         ..Default::default()
                     },
@@ -3419,8 +3424,9 @@ enum ClickOutcome {
     Switched { mode: TrayMode, name: String },
     /// 已经在用 / 故障转移开着（只读）：什么都不做。
     Unchanged,
-    /// 直连下点了需要路由的那家：不直接切。
-    NeedsRoute,
+    /// 要在主界面上确认才能切（不直接切），值是 [`TrayNavigation::intent`]：直连下点了需要路由的那家
+    /// （`needsRoute`）；Claude Desktop 切过去要换 Desktop 的（`desktopSwitch`）。
+    NeedsUi(&'static str),
 }
 
 /// 点一家供应商：切换照旧走 `ProviderService::switch`（里面先拿切换锁再看模式）。不再先关掉
@@ -3455,7 +3461,13 @@ fn handle_provider_click(
         .get_provider_by_id(provider_id, app_type)?
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
     if mode == TrayMode::Direct && provider_needs_routing(app_type, &provider) {
-        return Ok(ClickOutcome::NeedsRoute);
+        return Ok(ClickOutcome::NeedsUi("needsRoute"));
+    }
+    if *app_type == AppType::ClaudeDesktop
+        && mode == TrayMode::Direct
+        && crate::services::claude_desktop_account::switch_needs_ui(&provider)
+    {
+        return Ok(ClickOutcome::NeedsUi("desktopSwitch"));
     }
     crate::services::ProviderService::switch(state, app_type.clone(), provider_id)?;
     Ok(ClickOutcome::Switched {

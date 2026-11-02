@@ -67,6 +67,9 @@ import {
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import type { ManagedAuthProvider } from "@/lib/api";
 import { useCopilotAuth, useCodexOauth, useXaiOauth } from "./hooks";
+import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
+import { useClaudeDesktopProfiles } from "@/lib/query/claudeDesktop";
+import { CLAUDE_DESKTOP_OFFICIAL_ID } from "@/lib/api/claudeDesktopAccounts";
 import { isOAuthProviderType } from "@/config/constants";
 import {
   ClaudeReasoningEffortField,
@@ -108,6 +111,8 @@ export interface ClaudeDesktopProviderFormProps {
   };
   showButtons?: boolean;
   onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
+  /** 编辑时的卡片 id；原来那张固定 id 的官方卡不能绑 Claude 账号 */
+  providerId?: string;
 }
 
 type RouteRow = {
@@ -261,6 +266,7 @@ export function ClaudeDesktopProviderForm({
   initialData,
   showButtons = true,
   onManageAuthAccounts,
+  providerId,
 }: ClaudeDesktopProviderFormProps) {
   const { t } = useTranslation();
   const initialMode = isOAuthProviderType(initialData?.meta?.providerType)
@@ -422,6 +428,19 @@ export function ClaudeDesktopProviderForm({
   const isOfficial =
     initialData?.category === "official" ||
     activePreset?.category === "official";
+  // 新加的官方卡可以绑授权中心的 Claude 账号，成为账号卡：切过去后用这个号单独的 Desktop 数据目录
+  // 打开 Desktop（只有 macOS）。原来那张固定 id 的官方卡代表 Desktop 自己的登录，不能绑；以前绑过的保存时去掉
+  const isDefaultOfficial = providerId === CLAUDE_DESKTOP_OFFICIAL_ID;
+  const { data: desktopProfiles } = useClaudeDesktopProfiles(isOfficial);
+  const [claudeAccountId, setClaudeAccountId] = useState<string | null>(
+    () =>
+      (!isDefaultOfficial &&
+        resolveManagedAccountId(
+          initialData?.meta,
+          "claude_official",
+        )?.trim()) ||
+      null,
+  );
   const usesManagedOAuth =
     activePreset?.requiresOAuth === true ||
     isOAuthProviderType(activeProviderType);
@@ -755,6 +774,15 @@ export function ClaudeDesktopProviderForm({
       delete meta.claudeReasoningEffort;
       delete meta.endpointAutoSelect;
       delete meta.isFullUrl;
+      if (claudeAccountId) {
+        meta.authBinding = {
+          source: "managed_account",
+          authProvider: "claude_official",
+          accountId: claudeAccountId,
+        };
+      } else {
+        delete meta.authBinding;
+      }
       await onSubmit({
         ...values,
         name: values.name.trim(),
@@ -1068,6 +1096,21 @@ export function ClaudeDesktopProviderForm({
                 "Claude Desktop 官方供应商使用应用内置的 1P 登录，无需配置 API Key 和接口地址。",
             })}
           </div>
+        )}
+
+        {isOfficial && !isDefaultOfficial && desktopProfiles?.supported && (
+          <ClaudeAccountSelect
+            client="desktop"
+            value={claudeAccountId}
+            onChange={setClaudeAccountId}
+            // 新加时不选账号就是原来那张默认官方卡；编辑账号卡时只能换号
+            allowFollow={!providerId}
+            onManageAccounts={
+              onManageAuthAccounts
+                ? () => onManageAuthAccounts("claude_official")
+                : undefined
+            }
+          />
         )}
 
         {!isOfficial && (

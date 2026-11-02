@@ -123,6 +123,41 @@ describe("buildSwitchSections — direct", () => {
   });
 });
 
+describe("buildSwitchSections — Claude Desktop account cards", () => {
+  const bound = provider("desktop-personal", {
+    category: "official",
+    meta: {
+      authBinding: {
+        source: "managed_account",
+        authProvider: "claude_official",
+        accountId: "acc:org",
+      },
+    },
+  });
+  const desktopOpen = {
+    canOpen: (p: Provider) => p.id === bound.id,
+    open: vi.fn(),
+  };
+
+  it("marks the account card in use and offers to open its Desktop from More", () => {
+    const { sections } = build({
+      app: "claude-desktop",
+      providers: [official, bound, relay],
+      active: "direct",
+      view: "direct",
+      directId: bound.id,
+      desktopOpen,
+    });
+
+    const card = item(sections, bound.id);
+    expect(card.status?.label).toBe(t("providerCard.status.inUse"));
+    expect(card.buttons).toEqual([]);
+    expect(card.menuItems?.map((m) => m.key)).toEqual(["openDesktop"]);
+    card.menuItems?.[0].onSelect();
+    expect(desktopOpen.open).toHaveBeenCalledWith(bound);
+  });
+});
+
 describe("buildSwitchSections — delete guard", () => {
   // 后端 is_referenced：直连指针、路由 / 聚合模式下的当前路由都删不掉，哪个视图都要标出来
   it("disables delete on the direct provider in every view", () => {

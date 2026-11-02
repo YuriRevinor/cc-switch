@@ -55,6 +55,7 @@ import { StackSettingsSheet } from "./StackSettingsSheet";
 import { useCodexPauseOfficialLogin } from "./CodexPauseOfficialLogin";
 import { useDesktopConfigMessages } from "./useDesktopConfigMessages";
 import { type AppIdWith, appHas } from "@/config/appSpecs";
+import { useClaudeDesktopSwitch } from "./useClaudeDesktopSwitch";
 
 type ListCallbacks = Pick<
   React.ComponentProps<typeof ProviderList>,
@@ -69,6 +70,13 @@ type ListCallbacks = Pick<
   | "onSearchOpenChange"
 >;
 
+/** 托盘交给这页的切换（见 `trayRequest`） */
+export interface TrayProviderRequest {
+  intent: "needsRoute" | "desktopSwitch";
+  providerId: string;
+  nonce: number;
+}
+
 interface SwitchModePanelProps extends ListCallbacks {
   app: AppIdWith<"routeMode">;
   statusSlot?: HTMLDivElement | null;
@@ -76,16 +84,20 @@ interface SwitchModePanelProps extends ListCallbacks {
   currentProviderId: string;
   isLoading: boolean;
   scrollRef?: RefObject<HTMLDivElement>;
+  /** 直连切换；返回切过去没有（Claude Desktop 切过去后要换 Desktop） */
   onSwitch: (
     provider: Provider,
-    options?: { acknowledgedRouting?: boolean },
-  ) => unknown;
+    options?: { acknowledgedRouting?: boolean; quietSuccess?: boolean },
+  ) => Promise<boolean | void> | void;
   onOpenRoutingSettings: () => void;
   startupFailure?: StartupAttachFailure;
   onDismissStartupFailure?: () => void;
-  /** 托盘里点了直连下需要路由的那家：到这页后弹同一个「需要路由」对话框 */
-  needsRouteRequest?: { providerId: string; nonce: number };
-  onNeedsRouteHandled?: () => void;
+  /**
+   * 托盘交过来的切换：`needsRoute` 是直连下点了需要路由的那家，到这页后弹同一个「需要路由」对话框；
+   * `desktopSwitch` 是 Claude Desktop 切过去要换 Desktop 的，走同一个确认
+   */
+  trayRequest?: TrayProviderRequest;
+  onTrayRequestHandled?: () => void;
   /** 正在看的那格变了：新增 / 编辑供应商按它选表单布局。需要是稳定的回调 */
   onViewChange?: (app: AppIdWith<"routeMode">, view: AppMode) => void;
 }
@@ -109,8 +121,8 @@ export function SwitchModePanel({
   onOpenRoutingSettings,
   startupFailure,
   onDismissStartupFailure,
-  needsRouteRequest,
-  onNeedsRouteHandled,
+  trayRequest,
+  onTrayRequestHandled,
   onViewChange,
   ...listCallbacks
 }: SwitchModePanelProps) {
@@ -151,6 +163,7 @@ export function SwitchModePanel({
   const adoptCatalog = useAdoptCodexStackCatalog();
   const modeActions = useModeActions(app);
   const desktopMessages = useDesktopConfigMessages(app === "claude-desktop");
+  const desktopSwitch = useClaudeDesktopSwitch(app === "claude-desktop");
 
   const [dialog, setDialog] = useState<ModeDialogState | null>(null);
   const [routeSettingsOpen, setRouteSettingsOpen] = useState(false);
@@ -163,19 +176,41 @@ export function SwitchModePanel({
   }, [app, active, directId, routeId, stack?.staleClients?.auth]);
   const staleRevision = stack?.staleRevision ?? "";
 
+  // 直连切换。Claude Desktop 切过去可能要换 Desktop（换成账号卡那个号的、或退出账号目录的），
+  // 要确认的先确认，取消就不切
+  const switchDirect = (provider: Provider, acknowledgedRouting = false) => {
+    if (app !== "claude-desktop") {
+      void onSwitch(
+        provider,
+        acknowledgedRouting ? { acknowledgedRouting } : undefined,
+      );
+      return;
+    }
+    desktopSwitch.switchTo(
+      provider,
+      async (quietSuccess) =>
+        (await onSwitch(provider, { acknowledgedRouting, quietSuccess })) !==
+        false,
+    );
+  };
+
   // 供应商还没加载完时先等着，到了再弹
   useEffect(() => {
-    if (!needsRouteRequest) return;
-    const provider = providers[needsRouteRequest.providerId];
+    if (!trayRequest) return;
+    const provider = providers[trayRequest.providerId];
     if (!provider) return;
-    setDialog({
-      kind: "needsRoute",
-      providerId: provider.id,
-      reason: getRoutingReason(app, provider, t) ?? "",
-    });
-    onNeedsRouteHandled?.();
+    if (trayRequest.intent === "desktopSwitch") {
+      switchDirect(provider);
+    } else {
+      setDialog({
+        kind: "needsRoute",
+        providerId: provider.id,
+        reason: getRoutingReason(app, provider, t) ?? "",
+      });
+    }
+    onTrayRequestHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsRouteRequest?.nonce, providers]);
+  }, [trayRequest?.nonce, providers]);
 
   const providerList = useMemo(() => Object.values(providers), [providers]);
   const nameOf = (id: string | null) =>
@@ -248,7 +283,7 @@ export function SwitchModePanel({
     routingReason: (provider: Provider) =>
       getRoutingReason(app, provider, t) ?? "",
     actions: {
-      switchDirect: (provider: Provider) => void onSwitch(provider),
+      switchDirect: (provider: Provider) => switchDirect(provider),
       needsRouteDialog: (provider: Provider) =>
         setDialog({
           kind: "needsRoute",
@@ -283,6 +318,10 @@ export function SwitchModePanel({
           ? void onSwitch(provider)
           : void rememberDefault(provider),
     },
+    desktopOpen:
+      app === "claude-desktop"
+        ? { canOpen: desktopSwitch.canOpen, open: desktopSwitch.open }
+        : undefined,
   };
 
   // 页头始终显示实际生效的连接，不跟随正在浏览的模式页签。
@@ -673,16 +712,21 @@ export function SwitchModePanel({
         }
         onClose={() => setDialog(null)}
         onEnter={enterMode}
-        onExit={(useProviderId) =>
-          modeActions.exitToDirect({
+        onExit={async (useProviderId) => {
+          await modeActions.exitToDirect({
             directProviderId: directId,
             useProviderId,
             providerName: nameOf(useProviderId ?? directId),
-          })
-        }
+          });
+          // 回到直连落到的那家要换 Desktop 时（账号卡、或账号目录的 Desktop 开着），确认后换过去
+          const target = providers[useProviderId ?? directId ?? ""];
+          if (app === "claude-desktop" && target) {
+            desktopSwitch.afterSwitch(target);
+          }
+        }}
         onSwitchDirect={(providerId) => {
           const provider = providers[providerId];
-          if (provider) void onSwitch(provider, { acknowledgedRouting: true });
+          if (provider) switchDirect(provider, true);
         }}
       />
 
@@ -711,6 +755,8 @@ export function SwitchModePanel({
           }
         />
       )}
+
+      {app === "claude-desktop" && desktopSwitch.dialog}
 
       <ConfirmDialog
         isOpen={confirmFailover}

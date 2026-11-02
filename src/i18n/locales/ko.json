@@ -264,7 +264,10 @@
           "team": "Team",
           "teamPremium": "Team 프리미엄 시트",
           "enterprise": "Enterprise"
-        }
+        },
+        "desktopDefault": "Desktop의 현재 로그인 따르기",
+        "desktopDefaultDescription": "원래 Desktop 데이터 폴더 사용",
+        "desktopHelp": "계정을 선택하면 계정 카드가 됩니다. 다른 카드처럼 전환하면 CC Switch가 이 계정 전용 Desktop 데이터 폴더로 Desktop을 엽니다(다른 Desktop이 실행 중이면 먼저 확인합니다). 처음 전환할 때 Desktop에서 이 계정으로 한 번 로그인하세요. 계정을 선택하지 않으면 원래의 기본 공식 카드로, Desktop 기본 데이터 폴더에 로그인한 계정을 따릅니다."
       },
       "grokAccount": {
         "default": "Grok CLI 로그인 따르기",
@@ -348,6 +351,16 @@
         "active": "Claude Desktop 로컬 라우팅이 실행 중입니다 - {{address}}:{{port}}",
         "inactive": "모델 매핑 또는 형식 변환이 필요한 공급자를 위해 Claude Desktop 로컬 라우팅을 활성화합니다. 설정된 주소: {{address}}:{{port}}"
       }
+    },
+    "launch": {
+      "opened": "{{name}}(으)로 Claude Desktop을 열었습니다",
+      "openedForLogin": "새 Claude Desktop 창을 열었습니다. 그 창에서 {{login}}(으)로 로그인하세요",
+      "failed": "Claude Desktop을 열 수 없습니다: {{detail}}",
+      "confirmTitle": "{{name}}(으)로 Claude Desktop 열기",
+      "quitMessage": "실행 중인 Claude Desktop을 먼저 종료한 뒤(진행 중인 채팅과 Code 세션이 중단됩니다) {{name}}용 Claude Desktop을 엽니다.",
+      "quitConfirm": "종료하고 열기",
+      "firstLoginMessage": "이 계정을 처음 여는 것입니다. 열리는 Desktop에서 {{login}}(으)로 로그인하세요. 로그인은 이 계정 전용 데이터 폴더에 남으므로, 이후 이 카드로 전환하면 이 계정을 사용합니다.",
+      "firstLoginConfirm": "열고 로그인"
     }
   },
   "notifications": {
@@ -4606,7 +4619,8 @@
       "more": "{{name}}에 대한 추가 작업",
       "moveUp": "{{name}} 한 칸 위로 이동",
       "moveDown": "{{name}} 한 칸 아래로 이동",
-      "openTerminal": "{{name}} 설정으로 터미널 열기"
+      "openTerminal": "{{name}} 설정으로 터미널 열기",
+      "openDesktop": "이 계정으로 Claude Desktop 열기"
     },
     "chip": {
       "official": "공식",
@@ -5221,7 +5235,7 @@
       "workbuddyHelp": "WorkBuddy 데스크톱 앱의 공식 로그인입니다. CC Switch는 사용자를 대신해 WorkBuddy에 로그인할 수 없으며, 현재 로그인된 계정의 로그인 파일 전체를 스냅샷으로 저장합니다. 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘WorkBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 ‘WorkBuddy 공식 로그인’ 카드의 ‘추가’를 클릭하세요. ‘추가됨’ 상태인 공식 카드는 동시에 하나만 유지됩니다. 스냅샷은 이 컴퓨터에서만 사용할 수 있으며 클라우드로 동기화되지 않습니다.",
       "claudeHelpTerminal": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. 설정에서 Claude 설정 디렉터리를 별도로 지정한 경우, 카드를 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. Claude 공식 공급자 카드에서 계정을 선택한 다음, 해당 카드의 ‘터미널 열기’를 이용하세요.",
       "claudeHelpWsl": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 설정 디렉터리가 WSL에 있는 경우는 아직 지원하지 않습니다. 추후 지원할 예정입니다.",
-      "claudeHelp": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 공식 공급자 카드에서 계정을 선택하고 해당 카드로 전환하면 Claude Code의 로그인 계정이 즉시 해당 계정으로 바뀝니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요. 로그인 토큰은 이 컴퓨터에만 보관되며 업로드되거나 갱신되지 않고, 계정도 로그아웃되지 않습니다. 처음 전환할 때 Claude Code에 현재 로그인된 계정이 자동으로 추가됩니다. 계정을 전환하면 Remote Control 연결이 끊기며 프롬프트 캐시를 다시 생성해야 합니다."
+      "claudeHelp": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 공식 공급자 카드에서 계정을 선택하고 해당 카드로 전환하면 Claude Code의 로그인 계정이 즉시 해당 계정으로 바뀝니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요. 로그인 토큰은 이 컴퓨터에만 보관되며 업로드되거나 갱신되지 않고, 계정도 로그아웃되지 않습니다. 처음 전환할 때 Claude Code에 현재 로그인된 계정이 자동으로 추가됩니다. 계정을 전환하면 Remote Control 연결이 끊기며 프롬프트 캐시를 다시 생성해야 합니다. macOS에서는 Claude Desktop 공식 카드도 이 계정을 선택할 수 있습니다. 해당 카드로 전환하면 Desktop이 이 계정 전용 창으로 바뀌며, 사용 한도는 Claude Code와 공유합니다."
     },
     "addAccount": "계정 추가",
     "accountMenu": "{{login}}의 추가 작업",

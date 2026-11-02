@@ -174,9 +174,13 @@ export function useProviderActions(
     [updateProviderMutation],
   );
 
-  // 切换供应商
+  // 切换供应商；返回切过去没有。`quietSuccess`：成功提示由调用方出（Claude Desktop 切过去后还要换
+  // Desktop），警告照常
   const switchProvider = useCallback(
-    async (provider: Provider, options?: { acknowledgedRouting?: boolean }) => {
+    async (
+      provider: Provider,
+      options?: { acknowledgedRouting?: boolean; quietSuccess?: boolean },
+    ): Promise<boolean> => {
       // 必须开启当前应用的 takeover（只看全局进程会漏判别的应用已接管的情况）。
       // 确认框 F 里选了「仍然直连切换」的不再重复提醒。
       const routingReady =
@@ -219,7 +223,7 @@ export function useProviderActions(
           }),
           { duration: 6000 },
         );
-        return;
+        return false;
       }
 
       try {
@@ -271,7 +275,7 @@ export function useProviderActions(
           : undefined;
 
         // 若已弹过 proxyRequired 警告则不再弹 success
-        if (!proxyRequiredReason) {
+        if (!proxyRequiredReason && !options?.quietSuccess) {
           let messageKey = "notifications.switchSuccess";
           let defaultMessage = "切换成功！";
           if (activeApp === "codex") {
@@ -311,8 +315,10 @@ export function useProviderActions(
             duration: splitExtras.duration,
           });
         }
+        return true;
       } catch {
         // 错误提示由 mutation 处理
+        return false;
       }
     },
     [switchProviderMutation, syncClaudePlugin, activeApp, isProxyTakeover, t],

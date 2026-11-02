@@ -266,7 +266,10 @@
           "team": "Team",
           "teamPremium": "Team 進階席位",
           "enterprise": "Enterprise"
-        }
+        },
+        "desktopDefault": "跟隨 Desktop 目前登入",
+        "desktopDefaultDescription": "使用原本的 Desktop 資料目錄",
+        "desktopHelp": "選了帳號就是一張帳號卡：和其他卡一樣「切換」，切過去後 CC Switch 用這個帳號單獨的 Desktop 資料目錄開啟 Desktop（其他 Desktop 開著時先確認結束）。第一次切過去時在 Desktop 裡登入一次這個帳號。不選帳號就是原來那張預設官方卡，跟隨 Desktop 預設資料目錄登入的帳號。"
       },
       "grokAccount": {
         "default": "跟隨 Grok CLI 登入",
@@ -348,6 +351,16 @@
         "active": "Claude Desktop 本地路由已開啟 - {{address}}:{{port}}",
         "inactive": "開啟 Claude Desktop 本地路由，用於需要模型對應或格式轉換的供應商。目前設定位址：{{address}}:{{port}}"
       }
+    },
+    "launch": {
+      "opened": "已用「{{name}}」開啟 Claude Desktop",
+      "openedForLogin": "已開啟新的 Claude Desktop 視窗，請在裡面登入 {{login}}",
+      "failed": "開啟 Claude Desktop 失敗：{{detail}}",
+      "confirmTitle": "用「{{name}}」開啟 Claude Desktop",
+      "quitMessage": "會先結束正在執行的 Claude Desktop（進行中的對話和 Code 工作階段會中斷），再開啟「{{name}}」的 Claude Desktop。",
+      "quitConfirm": "結束並開啟",
+      "firstLoginMessage": "這是第一次用這個帳號開啟：在開啟的 Desktop 裡登入 {{login}}，登入保存在這個帳號單獨的資料目錄裡，之後切到這張卡就是這個帳號。",
+      "firstLoginConfirm": "開啟並登入"
     }
   },
   "notifications": {
@@ -4606,7 +4619,8 @@
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
       "moveDown": "{{name}} 下移一位",
-      "openTerminal": "用 {{name}} 開啟終端機"
+      "openTerminal": "用 {{name}} 開啟終端機",
+      "openDesktop": "開啟這個帳號的 Claude Desktop"
     },
     "chip": {
       "official": "官方",
@@ -5221,7 +5235,7 @@
       "workbuddyHelp": "WorkBuddy 桌面端的官方登入。CC Switch 不能替 WorkBuddy 登入，只能收錄它目前登入的帳號（整組登入檔案的快照）。要切換帳號，請在帳號的「…」裡選「將 WorkBuddy 切換到這個帳號」，或在供應商列表裡加入綁定它的「WorkBuddy 官方登入」卡（同一時間只有一張在「已加入」）。快照只在這台電腦上有效，不會隨雲端同步。",
       "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄，切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
       "claudeHelpWsl": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。Claude 設定目錄在 WSL 裡時暫不支援，後續會跟進。",
-      "claudeHelp": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。在 Claude 官方卡上選一個帳號，切到這張卡後，Claude Code 的登入會即時換成這個帳號；想同時用幾個帳號，從卡片「開啟終端機」。登入權杖只留在本機，不上傳、不重新整理、不登出。第一次切換會自動收進 Claude Code 目前登入的帳號；切換帳號後 Remote Control 會中斷，提示快取要重建。"
+      "claudeHelp": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。在 Claude 官方卡上選一個帳號，切到這張卡後，Claude Code 的登入會即時換成這個帳號；想同時用幾個帳號，從卡片「開啟終端機」。登入權杖只留在本機，不上傳、不重新整理、不登出。第一次切換會自動收進 Claude Code 目前登入的帳號；切換帳號後 Remote Control 會中斷，提示快取要重建。macOS 上的 Claude Desktop 官方卡也能選這裡的帳號，切到那張卡時 Desktop 換成這個帳號獨立的視窗，額度和 Claude Code 共用。"
     },
     "addAccount": "新增帳號",
     "accountMenu": "{{login}} 的更多操作",

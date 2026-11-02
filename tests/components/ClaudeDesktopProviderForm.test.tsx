@@ -9,9 +9,11 @@ import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { http, HttpResponse } from "msw";
 import { ClaudeDesktopProviderForm } from "@/components/providers/forms/ClaudeDesktopProviderForm";
 import type { ProviderMeta } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
+import { server } from "../msw/server";
 
 const authState = vi.hoisted(() => ({
   codexReauthRequired: false,
@@ -929,5 +931,44 @@ describe("ClaudeDesktopProviderForm", () => {
     expect(saved.meta?.claudeDesktopModelRoutes?.["claude-opus-5"]?.model).toBe(
       "copilot-fusion-auto",
     );
+  });
+
+  it("官方卡在 macOS 上可以选 Claude 账号，保存成和 Claude Code 卡一样的绑定", async () => {
+    const key = "aaaaaaaa-0000-4000-8000-000000000001:org";
+    server.use(
+      http.post("http://tauri.local/get_claude_desktop_profiles", () =>
+        HttpResponse.json({
+          supported: true,
+          defaultAccountUuid: null,
+          defaultRunning: false,
+          profiles: [],
+        }),
+      ),
+    );
+    const { onSubmit } = renderForm({
+      name: "Claude 个人",
+      category: "official",
+      settingsConfig: { env: {} },
+      meta: {
+        authBinding: {
+          source: "managed_account",
+          authProvider: "claude_official",
+          accountId: key,
+        },
+      },
+    });
+
+    expect(
+      await screen.findByRole("combobox", { name: "登录方式" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/选了账号就是一张账号卡/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].meta.authBinding).toEqual({
+      source: "managed_account",
+      authProvider: "claude_official",
+      accountId: key,
+    });
   });
 });

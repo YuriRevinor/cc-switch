@@ -35,6 +35,7 @@ import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import type { AuthCenterTarget } from "@/lib/api";
+import { addsDesktopDefaultOfficial } from "@/lib/api/claudeDesktopAccounts";
 import type { AppMode } from "@/types/proxy";
 import { appHas } from "@/config/appSpecs";
 
@@ -279,9 +280,13 @@ export function AddProviderDialog({
           values.presetId.replace("claude-desktop-", ""),
         );
         const preset = claudeDesktopProviderPresets[presetIndex];
+        // 官方预设不选账号就是原来那张固定 id 的官方卡（只有一张）；选了 Claude 账号是新的账号卡
         providerData.ensureClaudeDesktopOfficialSeed =
-          values.presetCategory === "official" &&
-          preset?.category === "official";
+          addsDesktopDefaultOfficial(
+            values.presetCategory === "official" &&
+              preset?.category === "official",
+            values.meta,
+          );
       }
 
       if (appId === "grokbuild" && values.presetId) {

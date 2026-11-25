@@ -17,7 +17,7 @@
 | `5fd1eea4` | fix(claude-desktop): never quit or auto-start Claude Desktop; keep 1P sign-in | 本地 |
 | `f4c167e4` | feat(claude-desktop): --open-claude-desktop command-line flag for hotkeys | 本地 |
 | `7460123a` | Claude Desktop: scratch sessions copied across data dirs show as 此电脑 (junction + transcript hardlinks) | 本地 |
-| （下一个） | feat(claude-desktop): cc-switch-open.exe hotkey launcher; activate a running Desktop directly | 本地 |
+| `942f9fd9` | feat(claude-desktop): cc-switch-open.exe hotkey launcher; activate a running Desktop directly | 本地 |
 
 合计 42 个文件，约 +2600 / −150 行（`git diff --stat 99f4bae5..HEAD`）。
 

@@ -4,6 +4,7 @@ pub mod backup_storage;
 pub mod balance;
 pub mod claude_account;
 pub mod claude_desktop_account;
+pub mod claude_desktop_scratch;
 pub mod claude_desktop_sessions;
 pub mod codebuddy_account;
 pub mod codex_oauth_models;

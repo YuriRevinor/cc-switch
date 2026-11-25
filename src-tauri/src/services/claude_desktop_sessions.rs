@@ -12,7 +12,10 @@
 //!   各文件夹出现过哪些会话记在 CC Switch 自己的 `~/.cc-switch/claude-desktop-sessions-seen.json`
 //!   里，不往 Desktop 的目录写别的文件。文件夹整个空了（新建或被清空）时不按这份记录挡。
 //!
-//! 这两条都只会少复制；任何目录里已有的文件都不删、不改。
+//! 这两条都只会少复制；任何目录里已有的文件都不删。
+//!
+//! 「此电脑」（无文件夹）会话换了数据目录要换工作区路径才显示成「此电脑」，见
+//! `claude_desktop_scratch`：复制时顺带处理；以前原样复制过来的，先备份再就地改这一处路径。
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
@@ -22,9 +25,11 @@ use serde_json::Value;
 
 use crate::error::AppError;
 use crate::services::claude_desktop_account::{is_uuid, signed_in_account};
+use crate::services::claude_desktop_scratch::{foreign_workspace, relocate};
 
 const SESSIONS_DIRNAME: &str = "claude-code-sessions";
 const SEEN_FILENAME: &str = "claude-desktop-sessions-seen.json";
+const BACKUP_DIRNAME: &str = "claude-desktop-sessions-backup";
 
 /// `<数据目录>/claude-code-sessions/<accountUuid>/<orgUuid>/`
 struct Folder {
@@ -45,6 +50,7 @@ struct Session {
     /// 本机对话记录的文件名（不带 `.jsonl`）。远程会话（SSH / WSL）、没有 `cliSessionId` 的为 `None`，
     /// 不按对话记录挡。
     transcript: Option<String>,
+    doc: Value,
 }
 
 impl Session {
@@ -65,22 +71,73 @@ pub(crate) fn fill(dirs: &[(PathBuf, bool)]) -> Result<usize, AppError> {
     if !project_dirs.contains(&configured) {
         project_dirs.push(configured);
     }
-    let seen_path = crate::config::get_app_config_dir().join(SEEN_FILENAME);
-    fill_with(dirs, &seen_path, transcript_ids(&project_dirs).as_ref())
+    let app_dir = crate::config::get_app_config_dir();
+    let places = Places {
+        seen: app_dir.join(SEEN_FILENAME),
+        backup: app_dir.join(BACKUP_DIRNAME),
+        transcripts: transcript_ids(&project_dirs),
+        projects: project_dirs,
+    };
+    fill_with(dirs, &places)
 }
 
-/// `fill` 的本体。`transcripts` 为 `None`（分不清哪些对话记录还在）时不按对话记录挡。
-fn fill_with(
-    dirs: &[(PathBuf, bool)],
-    seen_path: &Path,
-    transcripts: Option<&HashSet<String>>,
-) -> Result<usize, AppError> {
+/// `fill` 用到的 CC Switch 自己的文件和对话记录目录。
+struct Places {
+    seen: PathBuf,
+    /// 就地改会话文件前的备份放在这下面的 `<时间>/` 里
+    backup: PathBuf,
+    /// 还在的对话记录；`None`（分不清）时不按对话记录挡
+    transcripts: Option<HashSet<String>>,
+    projects: Vec<PathBuf>,
+}
+
+/// `fill` 的本体。
+fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<usize, AppError> {
+    let seen_path = places.seen.as_path();
+    let transcripts = places.transcripts.as_ref();
+    let roots: Vec<PathBuf> = dirs.iter().map(|(dir, _)| dir.clone()).collect();
     let mut folders = Vec::new();
     for (root, (dir, _)) in dirs.iter().enumerate() {
         folders.extend(scan(root, &dir.join(SESSIONS_DIRNAME))?);
     }
     add_signed_in_folders(dirs, &mut folders);
     let mut seen = Seen::load(seen_path);
+    let mut backup = Backup::new(&places.backup);
+
+    // 以前原样复制过来的「此电脑」会话：先备份，再就地换成这个数据目录里的工作区
+    for folder in folders.iter_mut().filter(|folder| dirs[folder.root].1) {
+        for (name, session) in folder.sessions.iter_mut() {
+            let Some(place) = foreign_workspace(
+                &session.doc,
+                &roots,
+                folder.root,
+                &folder.account,
+                &folder.org,
+            ) else {
+                continue;
+            };
+            if let Err(error) = backup.save(&session.path, &folder.account, &folder.org, name) {
+                log::warn!(
+                    "[DesktopSessions] {} 没能备份，不改: {error}",
+                    session.path.display()
+                );
+                continue;
+            }
+            let Some(moved) = relocate(&session.doc, &place, &places.projects) else {
+                continue;
+            };
+            match replace_file(&session.path, &to_bytes(&moved)?) {
+                Ok(()) => {
+                    log::info!(
+                        "[DesktopSessions] {} 换到这个数据目录的「此电脑」",
+                        session.path.display()
+                    );
+                    session.doc = moved;
+                }
+                Err(error) => log::warn!("[DesktopSessions] {error}"),
+            }
+        }
+    }
 
     // 同一个会话在几个文件夹里都有时，取最近活动的那一份
     let mut newest: BTreeMap<&str, &Session> = BTreeMap::new();
@@ -119,7 +176,19 @@ fn fill_with(
                     );
                     continue;
                 }
-                if copy_if_absent(&source.path, &folder.dir, name)? {
+                let bytes = match foreign_workspace(
+                    &source.doc,
+                    &roots,
+                    folder.root,
+                    &folder.account,
+                    &folder.org,
+                )
+                .and_then(|place| relocate(&source.doc, &place, &places.projects))
+                {
+                    Some(moved) => to_bytes(&moved)?,
+                    None => fs::read(&source.path).map_err(|e| AppError::io(&source.path, e))?,
+                };
+                if write_if_absent(&bytes, &folder.dir, name)? {
                     log::info!("[DesktopSessions] 补上 {}", target.display());
                     added += 1;
                 }
@@ -212,6 +281,7 @@ fn read_session(path: PathBuf) -> Option<Session> {
             .unwrap_or(0),
         transcript,
         path,
+        doc: Value::Object(doc.clone()),
     })
 }
 
@@ -275,16 +345,19 @@ fn add_signed_in_folders(dirs: &[(PathBuf, bool)], folders: &mut Vec<Folder>) {
     }
 }
 
+fn to_bytes(doc: &Value) -> Result<Vec<u8>, AppError> {
+    serde_json::to_vec(doc).map_err(|e| AppError::Message(format!("会话文件序列化失败: {e}")))
+}
+
 /// 先写临时文件再改名；目标已经有了就不动（返回 `false`）。
-fn copy_if_absent(source: &Path, target_dir: &Path, name: &str) -> Result<bool, AppError> {
+fn write_if_absent(bytes: &[u8], target_dir: &Path, name: &str) -> Result<bool, AppError> {
     let target = target_dir.join(name);
     if target.exists() {
         return Ok(false);
     }
-    let bytes = fs::read(source).map_err(|e| AppError::io(source, e))?;
     fs::create_dir_all(target_dir).map_err(|e| AppError::io(target_dir, e))?;
     let temp = target_dir.join(format!(".{name}.ccswitch-tmp"));
-    fs::write(&temp, &bytes).map_err(|e| AppError::io(&temp, e))?;
+    fs::write(&temp, bytes).map_err(|e| AppError::io(&temp, e))?;
     if target.exists() {
         let _ = fs::remove_file(&temp);
         return Ok(false);
@@ -294,6 +367,53 @@ fn copy_if_absent(source: &Path, target_dir: &Path, name: &str) -> Result<bool, 
         return Err(AppError::io(&target, error));
     }
     Ok(true)
+}
+
+/// 先写临时文件再改名，换掉已有的文件。
+fn replace_file(target: &Path, bytes: &[u8]) -> Result<(), AppError> {
+    let name = target.file_name().unwrap_or_default().to_string_lossy();
+    let temp = target.with_file_name(format!(".{name}.ccswitch-tmp"));
+    fs::write(&temp, bytes).map_err(|e| AppError::io(&temp, e))?;
+    fs::rename(&temp, target).map_err(|e| {
+        let _ = fs::remove_file(&temp);
+        AppError::io(target, e)
+    })
+}
+
+/// 就地改会话文件前的备份：`<备份根>/<时间>/<账号>/<组织>/<文件名>`，一次补齐用同一个时间。
+struct Backup<'a> {
+    root: &'a Path,
+    dir: Option<PathBuf>,
+}
+
+impl<'a> Backup<'a> {
+    fn new(root: &'a Path) -> Self {
+        Self { root, dir: None }
+    }
+
+    fn save(
+        &mut self,
+        source: &Path,
+        account: &str,
+        org: &str,
+        name: &str,
+    ) -> Result<(), AppError> {
+        let root = self.root;
+        let dir = self.dir.get_or_insert_with(|| {
+            root.join(chrono::Local::now().format("%Y%m%d-%H%M%S").to_string())
+        });
+        // 两个数据目录里同一个号、同一个组织的同名文件：后来的加序号，不覆盖
+        let folder = dir.join(account).join(org);
+        fs::create_dir_all(&folder).map_err(|e| AppError::io(&folder, e))?;
+        let mut target = folder.join(name);
+        let mut n = 1;
+        while target.exists() {
+            target = folder.join(format!("{name}.{n}"));
+            n += 1;
+        }
+        fs::copy(source, &target).map_err(|e| AppError::io(&target, e))?;
+        Ok(())
+    }
 }
 
 /// 各会话文件夹出现过的会话文件名：`{"version": 1, "folders": {"<文件夹路径>": ["local_<id>.json"]}}`。
@@ -381,8 +501,17 @@ mod tests {
         doc["title"].as_str().unwrap().to_string()
     }
 
+    fn places(temp: &TempDir, transcripts: Option<HashSet<String>>) -> Places {
+        Places {
+            seen: temp.path().join(SEEN_FILENAME),
+            backup: temp.path().join(BACKUP_DIRNAME),
+            transcripts,
+            projects: vec![temp.path().join("projects")],
+        }
+    }
+
     fn fill_in(temp: &TempDir, dirs: &[(PathBuf, bool)]) -> usize {
-        fill_with(dirs, &temp.path().join(SEEN_FILENAME), None).unwrap()
+        fill_with(dirs, &places(temp, None)).unwrap()
     }
 
     #[test]
@@ -487,12 +616,7 @@ mod tests {
         session(&a, S3, "never-started", 1);
         let ids: HashSet<String> = ["kept".to_string()].into();
 
-        let added = fill_with(
-            &[(data.clone(), true)],
-            &temp.path().join(SEEN_FILENAME),
-            Some(&ids),
-        )
-        .unwrap();
+        let added = fill_with(&[(data.clone(), true)], &places(&temp, Some(ids))).unwrap();
 
         assert_eq!(added, 2);
         assert!(b.join(S1).exists());
@@ -513,6 +637,65 @@ mod tests {
         let ids = transcript_ids(&[projects.clone(), temp.path().join("missing")]).unwrap();
         assert_eq!(ids, ["abc".to_string()].into());
         assert!(transcript_ids(&[temp.path().join("missing")]).is_none());
+    }
+
+    #[test]
+    fn scratch_sessions_land_in_this_pc_of_the_other_data_dir() {
+        use crate::services::claude_desktop_scratch::WORKSPACES_DIRNAME;
+        let temp = TempDir::new().unwrap();
+        let (default_dir, profile_dir) = (temp.path().join("default"), temp.path().join("profile"));
+        let a = folder(&default_dir, ACC_A);
+        let p = folder(&profile_dir, ACC_A);
+        let ws = |leaf: &str| {
+            let dir = default_dir
+                .join(WORKSPACES_DIRNAME)
+                .join(ACC_A)
+                .join(ORG)
+                .join(leaf);
+            fs::create_dir_all(&dir).unwrap();
+            dir.to_string_lossy().into_owned()
+        };
+        let doc = |cwd: String| json!({ "title": "s", "lastActivityAt": 1, "cwd": cwd, "originCwd": cwd });
+        fs::write(a.join(S1), doc(ws("scratch-2026-11-12-000001")).to_string()).unwrap();
+        // 以前原样复制过去的一份
+        let old_copy = doc(ws("scratch-2026-11-12-000002")).to_string();
+        fs::write(a.join(S2), &old_copy).unwrap();
+        fs::write(p.join(S2), &old_copy).unwrap();
+        let dirs = [(default_dir.clone(), true), (profile_dir.clone(), true)];
+
+        assert_eq!(fill_in(&temp, &dirs), 1);
+
+        let mine = profile_dir.join(WORKSPACES_DIRNAME).join(ACC_A).join(ORG);
+        for (name, leaf) in [
+            (S1, "scratch-2026-11-12-000001"),
+            (S2, "scratch-2026-11-12-000002"),
+        ] {
+            let got: Value = serde_json::from_slice(&fs::read(p.join(name)).unwrap()).unwrap();
+            assert_eq!(got["originCwd"], mine.join(leaf).to_string_lossy().as_ref());
+            assert!(mine.join(leaf).is_dir());
+        }
+        // 默认目录里的原件不动；旧副本改之前备份了
+        assert_eq!(fs::read_to_string(a.join(S2)).unwrap(), old_copy);
+        let backups: Vec<_> = fs::read_dir(temp.path().join(BACKUP_DIRNAME))
+            .unwrap()
+            .collect();
+        assert_eq!(backups.len(), 1);
+        let saved = backups[0]
+            .as_ref()
+            .unwrap()
+            .path()
+            .join(ACC_A)
+            .join(ORG)
+            .join(S2);
+        assert_eq!(fs::read_to_string(saved).unwrap(), old_copy);
+        // 再来一次什么都不变
+        assert_eq!(fill_in(&temp, &dirs), 0);
+        assert_eq!(
+            fs::read_dir(temp.path().join(BACKUP_DIRNAME))
+                .unwrap()
+                .count(),
+            1
+        );
     }
 
     #[test]

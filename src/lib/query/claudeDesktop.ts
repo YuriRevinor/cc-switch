@@ -16,3 +16,21 @@ export function useClaudeDesktopProfiles(enabled = true) {
     refetchInterval: PROFILES_POLL_MS,
   });
 }
+
+/** 会话同步开关和回收站 */
+export const claudeDesktopSessionSyncKey = [
+  "claudeDesktopSessionSync",
+] as const;
+
+/** 打开 Desktop 时后台同步，回收站可能多出东西：隔一会儿看一次 */
+const SESSION_SYNC_POLL_MS = 10000;
+
+export function useClaudeDesktopSessionSync(enabled = true) {
+  return useQuery({
+    queryKey: claudeDesktopSessionSyncKey,
+    queryFn: () => claudeDesktopAccountsApi.getSessionSync(),
+    enabled,
+    refetchOnWindowFocus: true,
+    refetchInterval: SESSION_SYNC_POLL_MS,
+  });
+}

@@ -6,6 +6,8 @@ pub mod claude_account;
 pub mod claude_desktop_account;
 pub mod claude_desktop_scratch;
 pub mod claude_desktop_sessions;
+pub mod claude_desktop_sync;
+pub mod claude_desktop_trash;
 pub mod codebuddy_account;
 pub mod codex_oauth_models;
 pub mod codex_session_compression;

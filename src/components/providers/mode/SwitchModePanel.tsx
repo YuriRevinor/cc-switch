@@ -56,6 +56,7 @@ import { useCodexPauseOfficialLogin } from "./CodexPauseOfficialLogin";
 import { useDesktopConfigMessages } from "./useDesktopConfigMessages";
 import { type AppIdWith, appHas } from "@/config/appSpecs";
 import { useClaudeDesktopSwitch } from "./useClaudeDesktopSwitch";
+import { ClaudeDesktopSessionSync } from "./ClaudeDesktopSessionSync";
 
 type ListCallbacks = Pick<
   React.ComponentProps<typeof ProviderList>,
@@ -677,6 +678,7 @@ export function SwitchModePanel({
             {notices}
           </div>
         )}
+        {app === "claude-desktop" && <ClaudeDesktopSessionSync />}
         <ProviderList
           {...listCallbacks}
           providers={providers}

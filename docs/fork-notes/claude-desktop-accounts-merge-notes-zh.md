@@ -18,6 +18,7 @@
 | `f4c167e4` | feat(claude-desktop): --open-claude-desktop command-line flag for hotkeys | 本地 |
 | `7460123a` | Claude Desktop: scratch sessions copied across data dirs show as 此电脑 (junction + transcript hardlinks) | 本地 |
 | `942f9fd9` | feat(claude-desktop): cc-switch-open.exe hotkey launcher; activate a running Desktop directly | 本地 |
+| （下一个） | feat(claude-desktop): sync session deletes and archives across accounts, with a restorable trash | 本地 |
 
 合计 42 个文件，约 +2600 / −150 行（`git diff --stat 99f4bae5..HEAD`）。
 
@@ -44,6 +45,8 @@
 7. **「此电脑」会话**（`7460123a`）：没选文件夹的会话复制到别的数据目录后仍显示为「此电脑」，
    靠目录链接 + 对话记录硬链接实现，见 4.5。
 8. **快捷键启动器 `cc-switch-open.exe`**：比 `cc-switch.exe --open-claude-desktop` 快，见第 5 节。
+9. **多账号同步删除和归档**：在一个号里删除或归档会话，其他号跟着做；删掉的挪进 CC Switch 的回收站，
+   Claude Desktop 页上可以恢复、清空，有开关（默认开），见 4.6。
 
 ## 3. 文件清单（按提交）
 
@@ -171,6 +174,28 @@
   - `win::activate_window(pid)`：枚举顶层窗口，找到这个进程看得见、没有所有者、有标题的窗口，最小化的先还原，
     `SetForegroundWindow`。找不到（缩在托盘里）或拿不到前台时，退回原来的「同目录再启动一次」。
 
+### 3.8 同步删除和归档
+
+- **新增** `services/claude_desktop_sync.rs`：`SyncLedger`（开关、删除记录、恢复时间、归档意图、各文件夹上次的归档状态）、
+  `apply_deletes`、`apply_archive`、`record_archived`。
+- **新增** `services/claude_desktop_trash.rs`：回收站批次、清单、列表、恢复、清空。
+- `services/claude_desktop_sessions.rs`：
+  - `Folder` / `Session` 改成 `pub(crate)`，多了 `markers`（`deleted_<id>`）、`id`、`modified`；
+  - 记录文件升到 `version: 2`，多一个 `sync` 对象（读 v1 时为默认值：开）；
+  - `fill` 返回 `FillReport`，补齐前先 `record_markers` → `apply_deletes` → `apply_archive`，补齐时跳过已删除的；
+  - 新增 `sync_status` / `set_sync_enabled` / `restore` / `empty_trash`，全部经一个全局锁；
+  - `replace_file` 改成 `pub(crate)`。
+- `services/claude_desktop_scratch.rs`：`ensure_link` 改成 `pub(crate)`，新增 `remove_link`。
+- `services/claude_desktop_account.rs`：抽出 `session_dirs()`，新增 `restore_session()`，日志写出补齐和同步的数量。
+- `commands/claude_desktop_account.rs` + `lib.rs`：`get_claude_desktop_session_sync`、`set_claude_desktop_session_sync`、
+  `restore_claude_desktop_session`、`empty_claude_desktop_session_trash`。
+- 前端：
+  - **新增** `components/providers/mode/ClaudeDesktopSessionSync.tsx`（开关、「最近删除」对话框、新同步提示），
+    在 `SwitchModePanel.tsx` 里放在卡片列表上方；
+  - `lib/api/claudeDesktopAccounts.ts`、`lib/query/claudeDesktop.ts`：接口和查询（10 秒刷新一次）；
+  - 8 个语言文件加 `claudeDesktop.sessionSync.*`；
+  - **新增** `tests/components/ClaudeDesktopSessionSync.test.tsx`。
+
 ## 4. 关键设计和踩过的坑（换上游版本时最容易出问题的地方）
 
 ### 4.1 Claude Desktop（Windows MSIX 版，包名 `Claude_pzs8sxrjxfjjc`）的行为
@@ -205,10 +230,15 @@
   关键字段有 `cliSessionId`、`cwd`、`lastActivityAt`、`isArchived`。
 - 对话记录：`~/.claude/projects/<项目>/<cliSessionId>.jsonl`，和账号无关。
 - Desktop 删会话时：
-  - 删列表文件和会话目录；
+  - 删列表文件，在同一个文件夹里写 `deleted_<会话 id>`（内容是删除时间，毫秒）。手动删、「清理不活跃会话」、
+    让 Claude 用会话管理工具删，都走这一条；
   - 只有当前数据目录（所有账号）和 Desktop 自己知道的几个固定目录里都没有别的记录引用这个 `cliSessionId` 时，
-    才把对话记录移走；
-  - CC Switch 的账号目录**不在**它查的范围里。
+    才把对话记录移走（先改名成 `<id>.jsonl.desktop-deleted-<nonce>`，再删）；硬链接数不为 1 的对话记录不动；
+  - CC Switch 的账号目录**不在**它查的范围里：普通文件夹会话在一个号里删掉后，其他号里的副本就打不开了
+    （同步删除正好把它们一起挪走）。
+- 归档：真正的状态是会话文件里的 `isArchived`（还有 `archiveSetAtMs`、`autoArchiveExempt`）。
+  文件夹里的 `archived-sessions.idx`（`{"v":1,"archived":["local_<id>",…]}`）只是加载时的提示，读不懂时 Desktop 不用它。
+  Desktop 也会自动归档长期不用的会话。
 
 ### 4.3 会话补齐规则（`claude_desktop_sessions.rs`）
 
@@ -244,6 +274,29 @@
   工作区里的文件没了（对话记录因为是硬链接，还在）。要彻底避免，得把工作区挪到 CC Switch 自己的目录、
   每个数据目录都只放链接；目前没这样做，因为那要改动原件。
 - 转换以前原样复制的会话只在目录空闲（那个 Desktop 没开着）时进行，改之前备份。
+
+### 4.6 同步删除和归档（`claude_desktop_sync.rs`、`claude_desktop_trash.rs`）
+
+- **删除的依据是 Desktop 自己写的 `deleted_<id>` 标记**，不靠「文件不见了」去猜，所以批量删除、一个号里全删光都照常同步。
+  看到的标记都记进 `sync.deleted`（Desktop 以后清掉标记也还算数）。
+- 补齐前，在每个能写的文件夹里，把有删除记录的会话：
+  1. `lastActivityAt` 晚于删除时间的留着（删除之后在这个号里还用过），只记日志；
+  2. 否则挪进回收站；它是 CC Switch 建的「此电脑」链接就删掉链接（记下来恢复时重建）；
+  3. 在这个文件夹里也写一个 `deleted_<id>`（记在清单里，恢复时删掉）。
+- 某个删除记录再也没有副本时（所有数据目录都算，开着的也算），处理 CC Switch 挪走的那些副本里写着的对话记录
+  （`cliSessionId`、`unarchivedCliSessionId`、`priorCliSessionIds`、`overflowCliSessionIds`）和「此电脑」工作区：
+  - 还有任何剩下的会话引用的对话记录不动；
+  - 工作区只在它所在的数据目录空闲、也没有剩下的会话用着时挪走。
+- 开着的 Desktop 的目录不动，等下次它关着的时候再处理。
+- **恢复**：把这个会话的各项挪回原处（原处已有文件的不覆盖；开着的 Desktop 目录里的那几份留在回收站，再点一次）；
+  记下恢复时间，早于它的删除记录不再算数；删掉没开着的目录里的 `deleted_<id>`，去掉各文件夹「删过」的记录，
+  下次补齐就补回所有号。
+- **归档**：`sync.archivedSeen` 记各文件夹上次看到的 `isArchived`。某几份变了，取文件修改时间最晚的那份为准，记成
+  `sync.archive[id]`（带三个字段的值和时间），套到其余能写的副本上（`lastActivityAt` 晚于那个时间的不改），同时更新
+  那个文件夹的 `archived-sessions.idx`。第一次运行只记录状态、不改。
+- **开关**（`sync.enabled`，默认开）：关掉后不挪、不改归档；补齐时只跳过这个文件夹自己有标记的会话。
+- 回收站从不自动清空。批次目录名是本地时间，清单里的时间是 UTC 毫秒。
+- 第一次在用户机器上运行（2026-11-25 估算）：200 个删除标记里，只有 1 个会话在别的号里还有副本（8 份），会被挪进回收站。
 
 ### 4.4 不自动关闭/启动的原则
 
@@ -283,9 +336,9 @@ PowerToys 键盘管理器：重新映射快捷键 → 选一个快捷键 → 操
 ```sh
 source .tool/env.sh
 cd src-tauri && cargo fmt && cargo clippy --lib --tests   # 应该 0 警告
-cargo test --lib claude_desktop                            # Desktop 相关约 100 个测试
+cargo test --lib claude_desktop                            # Desktop 相关约 106 个测试
 cd .. && pnpm exec tsc --noEmit -p .
-pnpm exec vitest run tests/components/ClaudeDesktopSwitch.test.tsx tests/components/SwitchModePanel.test.tsx tests/config/localeParity.test.ts
+pnpm exec vitest run tests/components/ClaudeDesktopSwitch.test.tsx tests/components/ClaudeDesktopSessionSync.test.tsx tests/components/SwitchModePanel.test.tsx tests/config/localeParity.test.ts
 pnpm tauri build --no-bundle                              # 产物 src-tauri/target/release/cc-switch.exe
 cd src-tauri && cargo build --release --bin cc-switch-open # 产物 src-tauri/target/release/cc-switch-open.exe
 ```
@@ -308,7 +361,10 @@ portable=true
   - 这条路径在后端只在 CLI 那一步失败时写日志，直接查询失败不写日志。可以考虑补上日志。
 - 用户把 Desktop 账号卡绑在了和默认数据目录同一个号上。这种情况下账号卡会另开一个空目录，要重新登录，意义不大。
   可以考虑在界面上提示，或者直接用默认目录。
-- 「此电脑」会话：在原件所在的目录里删会话会删掉共用的工作区，见 4.5 的风险一条。
+- 「此电脑」会话：在原件所在的目录里删会话会删掉共用的工作区，见 4.5 的风险一条（打开同步删除后，其他号里的副本
+  也会被一起挪进回收站，不会留下打不开的链接，但工作区里的文件已经被 Desktop 删了）。
+- 同步删除/归档只在通过 CC Switch 打开 Desktop 时执行；同一时间开着的那个 Desktop 要关掉重开才看得到别处的变化。
+- 归档以文件修改时间判断谁先变：Desktop 如果在没改归档的情况下重写了文件，不影响判断（只比较变了的那几份）。
 - `cc-switch-open.exe` 和直接激活窗口没有在真实环境里试过（不能替用户启动 Desktop）；拿不到前台时会退回旧办法。
 - 没有在真实 Desktop 上做端到端测试（用户要求不要自动启动、关闭 Claude）。Windows 部分只用单元测试和只读探测验证过。
 - `--user-data-dir` 和 `--claude-first-party-sign-in` 都不是公开接口，Desktop 升级后要复查第 4.1 节。

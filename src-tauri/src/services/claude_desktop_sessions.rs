@@ -16,6 +16,9 @@
 //!
 //! 「此电脑」（无文件夹）会话换了数据目录要换工作区路径才显示成「此电脑」，见
 //! `claude_desktop_scratch`：复制时顺带处理；以前原样复制过来的，先备份再就地改这一处路径。
+//!
+//! 在一个号里删除、归档的会话同步到其他号，见 `claude_desktop_sync`（删掉的挪进 CC Switch 的回收站，
+//! 见 `claude_desktop_trash`）；补齐时先做这一步。
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
@@ -26,31 +29,50 @@ use serde_json::Value;
 use crate::error::AppError;
 use crate::services::claude_desktop_account::{is_uuid, signed_in_account};
 use crate::services::claude_desktop_scratch::{foreign_workspace, relocate};
+use crate::services::claude_desktop_sync::{
+    apply_archive, apply_deletes, is_archived, record_archived, SyncLedger, SyncReport,
+    MARKER_PREFIX,
+};
+use crate::services::claude_desktop_trash::{self as trash, RestoreReport, Trash, TrashEntry};
 
 const SESSIONS_DIRNAME: &str = "claude-code-sessions";
 const SEEN_FILENAME: &str = "claude-desktop-sessions-seen.json";
 const BACKUP_DIRNAME: &str = "claude-desktop-sessions-backup";
+const TRASH_DIRNAME: &str = "claude-desktop-sessions-trash";
+
+/// 补齐、恢复、改开关一次只做一件（记录文件和回收站是共用的）
+static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock() -> std::sync::MutexGuard<'static, ()> {
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// `<数据目录>/claude-code-sessions/<accountUuid>/<orgUuid>/`
-struct Folder {
+pub(crate) struct Folder {
     /// 所在数据目录（`dirs` 里的下标）
-    root: usize,
-    account: String,
-    org: String,
-    dir: PathBuf,
+    pub(crate) root: usize,
+    pub(crate) account: String,
+    pub(crate) org: String,
+    pub(crate) dir: PathBuf,
     /// 文件名 → 会话文件
-    sessions: BTreeMap<String, Session>,
+    pub(crate) sessions: BTreeMap<String, Session>,
+    /// Desktop 写的删除标记：会话 id → 删除时间（毫秒）
+    pub(crate) markers: BTreeMap<String, i64>,
 }
 
 /// 一个会话文件里用得到的几项。
-struct Session {
-    path: PathBuf,
+pub(crate) struct Session {
+    /// 会话 id（文件名 `local_<id>.json` 里的 `<id>`）
+    pub(crate) id: String,
+    pub(crate) path: PathBuf,
     /// `lastActivityAt`（毫秒），没有时为 0
-    last_activity: i64,
+    pub(crate) last_activity: i64,
+    /// 文件修改时间（毫秒）
+    pub(crate) modified: i64,
     /// 本机对话记录的文件名（不带 `.jsonl`）。远程会话（SSH / WSL）、没有 `cliSessionId` 的为 `None`，
     /// 不按对话记录挡。
     transcript: Option<String>,
-    doc: Value,
+    pub(crate) doc: Value,
 }
 
 impl Session {
@@ -62,8 +84,21 @@ impl Session {
     }
 }
 
-/// 把各数据目录里每个账号缺的会话补上，返回补了几个。`dirs` 是 (数据目录, 能不能写)。
-pub(crate) fn fill(dirs: &[(PathBuf, bool)]) -> Result<usize, AppError> {
+/// 一次补齐做了什么。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FillReport {
+    /// 补上的会话份数
+    pub added: usize,
+    pub sync: SyncReport,
+}
+
+/// 先同步删除和归档，再把各数据目录里每个账号缺的会话补上。`dirs` 是 (数据目录, 能不能写)。
+pub(crate) fn fill(dirs: &[(PathBuf, bool)]) -> Result<FillReport, AppError> {
+    let _guard = lock();
+    fill_with(dirs, &default_places(true))
+}
+
+fn default_places(with_transcripts: bool) -> Places {
     let mut project_dirs = vec![crate::config::get_home_dir()
         .join(".claude")
         .join("projects")];
@@ -72,13 +107,99 @@ pub(crate) fn fill(dirs: &[(PathBuf, bool)]) -> Result<usize, AppError> {
         project_dirs.push(configured);
     }
     let app_dir = crate::config::get_app_config_dir();
-    let places = Places {
+    Places {
         seen: app_dir.join(SEEN_FILENAME),
         backup: app_dir.join(BACKUP_DIRNAME),
-        transcripts: transcript_ids(&project_dirs),
+        trash: app_dir.join(TRASH_DIRNAME),
+        transcripts: if with_transcripts {
+            transcript_ids(&project_dirs)
+        } else {
+            None
+        },
         projects: project_dirs,
+    }
+}
+
+/// 同步开关和回收站里的会话。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSyncStatus {
+    pub enabled: bool,
+    pub trash: Vec<TrashEntry>,
+}
+
+pub(crate) fn sync_status() -> SessionSyncStatus {
+    let _guard = lock();
+    let places = default_places(false);
+    SessionSyncStatus {
+        enabled: Seen::load(&places.seen).sync.enabled,
+        trash: trash::list(&places.trash),
+    }
+}
+
+pub(crate) fn set_sync_enabled(enabled: bool) -> Result<(), AppError> {
+    let _guard = lock();
+    let places = default_places(false);
+    let mut seen = Seen::load(&places.seen);
+    seen.sync.enabled = enabled;
+    seen.save(&places.seen)
+}
+
+/// 清空回收站（永久删除里面的一切）。
+pub(crate) fn empty_trash() -> Result<(), AppError> {
+    let _guard = lock();
+    let places = default_places(false);
+    trash::empty(&places.trash).map_err(|e| AppError::io(&places.trash, e))
+}
+
+/// 从回收站恢复一个会话：挪回去的列表文件、对话记录、工作区；以后不再按恢复之前的删除标记删它，
+/// 下次补齐时还会补到别的号里。开着的 Desktop 的目录里的那几份先留在回收站。
+pub(crate) fn restore(
+    dirs: &[(PathBuf, bool)],
+    session_id: &str,
+) -> Result<RestoreReport, AppError> {
+    let _guard = lock();
+    restore_with(dirs, session_id, &default_places(false))
+}
+
+fn restore_with(
+    dirs: &[(PathBuf, bool)],
+    session_id: &str,
+    places: &Places,
+) -> Result<RestoreReport, AppError> {
+    if !is_uuid(session_id) {
+        return Err(AppError::Message(format!("不认识的会话 id: {session_id}")));
+    }
+    let writable = |path: &Path| {
+        dirs.iter()
+            .all(|(dir, idle)| *idle || !path.starts_with(dir))
     };
-    fill_with(dirs, &places)
+    let report = trash::restore(&places.trash, session_id, &writable)
+        .map_err(|e| AppError::io(&places.trash, e))?;
+    let mut seen = Seen::load(&places.seen);
+    seen.sync
+        .restored
+        .insert(session_id.to_string(), trash::now_ms());
+    if let Some(tomb) = seen.sync.deleted.get_mut(session_id) {
+        tomb.done = false;
+        tomb.cli.clear();
+        tomb.workspaces.clear();
+    }
+    // Desktop 自己的删除标记也去掉（只在没开着的目录），各文件夹「删过」的记录也去掉：下次补齐补回去
+    let name = format!("local_{session_id}.json");
+    for (root, (dir, idle)) in dirs.iter().enumerate() {
+        if !idle {
+            continue;
+        }
+        for folder in scan(root, &dir.join(SESSIONS_DIRNAME))? {
+            let _ = fs::remove_file(folder.dir.join(format!("{MARKER_PREFIX}{session_id}")));
+        }
+    }
+    for names in seen.folders.values_mut() {
+        names.remove(&name);
+    }
+    seen.save(&places.seen)?;
+    Ok(report)
 }
 
 /// `fill` 用到的 CC Switch 自己的文件和对话记录目录。
@@ -86,13 +207,15 @@ struct Places {
     seen: PathBuf,
     /// 就地改会话文件前的备份放在这下面的 `<时间>/` 里
     backup: PathBuf,
+    /// 同步删除的回收站
+    trash: PathBuf,
     /// 还在的对话记录；`None`（分不清）时不按对话记录挡
     transcripts: Option<HashSet<String>>,
     projects: Vec<PathBuf>,
 }
 
 /// `fill` 的本体。
-fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<usize, AppError> {
+fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<FillReport, AppError> {
     let seen_path = places.seen.as_path();
     let transcripts = places.transcripts.as_ref();
     let roots: Vec<PathBuf> = dirs.iter().map(|(dir, _)| dir.clone()).collect();
@@ -139,6 +262,24 @@ fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<usize, AppErro
         }
     }
 
+    // 别的号里删除、归档的会话同步过来
+    let mut report = FillReport::default();
+    let mut bin = Trash::new(&places.trash);
+    seen.sync.record_markers(&folders);
+    if seen.sync.enabled {
+        report.sync = apply_deletes(
+            &mut folders,
+            dirs,
+            &mut seen.sync,
+            &mut bin,
+            &places.projects,
+        );
+        report.sync.archived = apply_archive(&mut folders, dirs, &mut seen.sync);
+    }
+    if let Err(error) = bin.finish() {
+        log::warn!("[DesktopSessions] 回收站清单没写进去: {error}");
+    }
+
     // 同一个会话在几个文件夹里都有时，取最近活动的那一份
     let mut newest: BTreeMap<&str, &Session> = BTreeMap::new();
     for (name, file) in folders.iter().flat_map(|folder| &folder.sessions) {
@@ -149,6 +290,7 @@ fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<usize, AppErro
     }
 
     let mut added = 0;
+    let mut added_archived = Vec::new();
     let mut updates = Vec::new();
     for folder in &folders {
         let key = folder.dir.to_string_lossy().into_owned();
@@ -167,6 +309,10 @@ fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<usize, AppErro
                 let target = folder.dir.join(name);
                 if before.contains(*name) {
                     log::info!("[DesktopSessions] 不补 {}：这个号里删过", target.display());
+                    continue;
+                }
+                if seen.sync.blocks_refill(folder, &source.id) {
+                    log::info!("[DesktopSessions] 不补 {}：已经删除", target.display());
                     continue;
                 }
                 if source.transcript_missing(transcripts) {
@@ -191,6 +337,7 @@ fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<usize, AppErro
                 if write_if_absent(&bytes, &folder.dir, name)? {
                     log::info!("[DesktopSessions] 补上 {}", target.display());
                     added += 1;
+                    added_archived.push((key.clone(), source.id.clone(), is_archived(&source.doc)));
                 }
                 now.insert((*name).to_string());
             }
@@ -203,11 +350,13 @@ fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<usize, AppErro
     for (key, names) in updates {
         seen.set(key, names);
     }
+    record_archived(&folders, &added_archived, &mut seen.sync);
     if let Err(error) = seen.save(seen_path) {
         // 记不下只会让删过的会话下次又被补回来，不影响打开
         log::warn!("[DesktopSessions] 没能记下各文件夹的会话: {error}");
     }
-    Ok(added)
+    report.added = added;
+    Ok(report)
 }
 
 /// 读出一个数据目录里的账号文件夹。名字不是 UUID 的目录、不是 `local_<uuid>.json` 的文件、坏掉的
@@ -217,18 +366,30 @@ fn scan(root: usize, sessions_dir: &Path) -> Result<Vec<Folder>, AppError> {
     for (account, account_dir) in uuid_subdirs(sessions_dir)? {
         for (org, dir) in uuid_subdirs(&account_dir)? {
             let mut sessions = BTreeMap::new();
+            let mut markers = BTreeMap::new();
             for entry in fs::read_dir(&dir).map_err(|e| AppError::io(&dir, e))? {
                 let entry = entry.map_err(|e| AppError::io(&dir, e))?;
                 let name = entry.file_name().to_string_lossy().into_owned();
-                let is_session = entry.file_type().is_ok_and(|kind| kind.is_file())
-                    && name
-                        .strip_prefix("local_")
-                        .and_then(|rest| rest.strip_suffix(".json"))
-                        .is_some_and(is_uuid);
-                if !is_session {
+                if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
                     continue;
                 }
-                if let Some(session) = read_session(entry.path()) {
+                if let Some(id) = name.strip_prefix(MARKER_PREFIX).filter(|id| is_uuid(id)) {
+                    // 读不出时间的标记按很早以前算：不会把后来用过的副本删掉
+                    let at = fs::read_to_string(entry.path())
+                        .ok()
+                        .and_then(|text| text.trim().parse::<i64>().ok())
+                        .unwrap_or(0);
+                    markers.insert(id.to_string(), at);
+                    continue;
+                }
+                let Some(id) = name
+                    .strip_prefix("local_")
+                    .and_then(|rest| rest.strip_suffix(".json"))
+                    .filter(|id| is_uuid(id))
+                else {
+                    continue;
+                };
+                if let Some(session) = read_session(entry.path(), id) {
                     sessions.insert(name, session);
                 }
             }
@@ -238,6 +399,7 @@ fn scan(root: usize, sessions_dir: &Path) -> Result<Vec<Folder>, AppError> {
                 org,
                 dir,
                 sessions,
+                markers,
             });
         }
     }
@@ -263,7 +425,12 @@ fn uuid_subdirs(dir: &Path) -> Result<Vec<(String, PathBuf)>, AppError> {
 }
 
 /// 读会话文件；不是 JSON 对象（读不了、坏了）时为 `None`。
-fn read_session(path: PathBuf) -> Option<Session> {
+fn read_session(path: PathBuf, id: &str) -> Option<Session> {
+    let modified = fs::metadata(&path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_millis() as i64);
     let doc: Value = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
     let doc = doc.as_object()?;
     let remote = ["sshConfig", "wslConfig"]
@@ -275,6 +442,8 @@ fn read_session(path: PathBuf) -> Option<Session> {
         .filter(|id| !remote && !id.is_empty())
         .map(str::to_string);
     Some(Session {
+        id: id.to_string(),
+        modified,
         last_activity: doc
             .get("lastActivityAt")
             .and_then(Value::as_i64)
@@ -339,6 +508,7 @@ fn add_signed_in_folders(dirs: &[(PathBuf, bool)], folders: &mut Vec<Folder>) {
                     account: account.clone(),
                     org,
                     sessions: BTreeMap::new(),
+                    markers: BTreeMap::new(),
                 });
             }
         }
@@ -370,7 +540,7 @@ fn write_if_absent(bytes: &[u8], target_dir: &Path, name: &str) -> Result<bool, 
 }
 
 /// 先写临时文件再改名，换掉已有的文件。
-fn replace_file(target: &Path, bytes: &[u8]) -> Result<(), AppError> {
+pub(crate) fn replace_file(target: &Path, bytes: &[u8]) -> Result<(), AppError> {
     let name = target.file_name().unwrap_or_default().to_string_lossy();
     let temp = target.with_file_name(format!(".{name}.ccswitch-tmp"));
     fs::write(&temp, bytes).map_err(|e| AppError::io(&temp, e))?;
@@ -416,10 +586,12 @@ impl<'a> Backup<'a> {
     }
 }
 
-/// 各会话文件夹出现过的会话文件名：`{"version": 1, "folders": {"<文件夹路径>": ["local_<id>.json"]}}`。
+/// CC Switch 自己的记录：`{"version": 2, "folders": {"<文件夹路径>": ["local_<id>.json"]}, "sync": {…}}`。
+/// `folders` 是各会话文件夹出现过的会话文件名（version 1 只有这一项）；`sync` 见 `SyncLedger`。
 #[derive(Default)]
 struct Seen {
     folders: BTreeMap<String, BTreeSet<String>>,
+    sync: SyncLedger,
 }
 
 impl Seen {
@@ -429,12 +601,21 @@ impl Seen {
             Ok(bytes) => bytes,
             Err(_) => return Self::default(),
         };
-        let folders = serde_json::from_slice::<Value>(&bytes)
-            .ok()
-            .and_then(|mut doc| doc.get_mut("folders").map(Value::take))
+        let Ok(mut doc) = serde_json::from_slice::<Value>(&bytes) else {
+            log::warn!("[DesktopSessions] {} 读不懂，从头记", path.display());
+            return Self::default();
+        };
+        let sync = doc
+            .get_mut("sync")
+            .map(Value::take)
+            .and_then(|sync| serde_json::from_value(sync).ok())
+            .unwrap_or_default();
+        let folders = doc
+            .get_mut("folders")
+            .map(Value::take)
             .and_then(|folders| serde_json::from_value(folders).ok());
         match folders {
-            Some(folders) => Self { folders },
+            Some(folders) => Self { folders, sync },
             None => {
                 log::warn!("[DesktopSessions] {} 读不懂，从头记", path.display());
                 Self::default()
@@ -455,7 +636,7 @@ impl Seen {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
-        let doc = serde_json::json!({ "version": 1, "folders": self.folders });
+        let doc = serde_json::json!({ "version": 2, "folders": self.folders, "sync": self.sync });
         let bytes = serde_json::to_vec_pretty(&doc)
             .map_err(|e| AppError::Message(format!("会话记录序列化失败: {e}")))?;
         let temp = path.with_extension("json.tmp");
@@ -505,13 +686,14 @@ mod tests {
         Places {
             seen: temp.path().join(SEEN_FILENAME),
             backup: temp.path().join(BACKUP_DIRNAME),
+            trash: temp.path().join(TRASH_DIRNAME),
             transcripts,
             projects: vec![temp.path().join("projects")],
         }
     }
 
     fn fill_in(temp: &TempDir, dirs: &[(PathBuf, bool)]) -> usize {
-        fill_with(dirs, &places(temp, None)).unwrap()
+        fill_with(dirs, &places(temp, None)).unwrap().added
     }
 
     #[test]
@@ -616,7 +798,9 @@ mod tests {
         session(&a, S3, "never-started", 1);
         let ids: HashSet<String> = ["kept".to_string()].into();
 
-        let added = fill_with(&[(data.clone(), true)], &places(&temp, Some(ids))).unwrap();
+        let added = fill_with(&[(data.clone(), true)], &places(&temp, Some(ids)))
+            .unwrap()
+            .added;
 
         assert_eq!(added, 2);
         assert!(b.join(S1).exists());
@@ -696,6 +880,243 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    fn id_of(name: &str) -> &str {
+        name.strip_prefix("local_")
+            .unwrap()
+            .strip_suffix(".json")
+            .unwrap()
+    }
+
+    fn mark_deleted(dir: &Path, name: &str, at: i64) {
+        fs::write(
+            dir.join(format!("{MARKER_PREFIX}{}", id_of(name))),
+            at.to_string(),
+        )
+        .unwrap();
+    }
+
+    fn write_doc(dir: &Path, name: &str, doc: &Value, modified_ms: u64) {
+        let path = dir.join(name);
+        fs::write(&path, doc.to_string()).unwrap();
+        let time = std::time::UNIX_EPOCH + std::time::Duration::from_millis(modified_ms);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+    }
+
+    fn doc_of(path: &Path) -> Value {
+        serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_deletion_in_one_account_moves_the_other_copies_to_the_trash() {
+        let temp = TempDir::new().unwrap();
+        let (one, two, three) = (
+            temp.path().join("one"),
+            temp.path().join("two"),
+            temp.path().join("three"),
+        );
+        let a = folder(&one, ACC_A);
+        let b = folder(&two, ACC_A);
+        let c = folder(&three, ACC_A);
+        // 在 A 里删了 S1（Desktop 留下标记）；B 里的副本删除前就没再用过，C 的 Desktop 开着
+        mark_deleted(&a, S1, 1_000);
+        let s1 = json!({ "title": "s1", "lastActivityAt": 500, "cliSessionId": "cli-1" });
+        fs::write(b.join(S1), s1.to_string()).unwrap();
+        fs::write(c.join(S1), s1.to_string()).unwrap();
+        // S2 在 A 里删了，但在 B 里删除之后还用过
+        mark_deleted(&a, S2, 1_000);
+        session(&b, S2, "s2", 2_000);
+        // 对话记录
+        let projects = temp.path().join("projects").join("E--work");
+        fs::create_dir_all(&projects).unwrap();
+        fs::write(projects.join("cli-1.jsonl"), "{}").unwrap();
+
+        let dirs = [
+            (one.clone(), true),
+            (two.clone(), true),
+            (three.clone(), false),
+        ];
+        let report = fill_with(&dirs, &places(&temp, None)).unwrap();
+
+        assert_eq!(report.sync.trashed, 1);
+        assert_eq!(report.sync.kept, 1);
+        assert!(!b.join(S1).exists());
+        assert!(b.join(format!("{MARKER_PREFIX}{}", id_of(S1))).exists());
+        // 开着的不动；S1 不补回任何地方，留着的 S2 也不补回 A
+        assert!(c.join(S1).exists());
+        assert!(!a.join(S1).exists() && !a.join(S2).exists());
+        assert!(b.join(S2).exists());
+        // 还有一份（C 里）用着，对话记录不动
+        assert!(projects.join("cli-1.jsonl").exists());
+        let listed = trash::list(&temp.path().join(TRASH_DIRNAME));
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].title, "s1");
+
+        // C 的 Desktop 关了：它那份也挪走，再没有会话用到，对话记录一起挪走
+        let dirs = [(one, true), (two, true), (three, true)];
+        let report = fill_with(&dirs, &places(&temp, None)).unwrap();
+        assert_eq!(report.sync.trashed, 1);
+        assert!(!c.join(S1).exists());
+        assert!(!projects.join("cli-1.jsonl").exists());
+        let listed = trash::list(&temp.path().join(TRASH_DIRNAME));
+        assert_eq!((listed[0].copies, listed[0].transcripts), (2, 1));
+    }
+
+    #[test]
+    fn a_transcript_still_used_by_another_session_stays() {
+        let temp = TempDir::new().unwrap();
+        let (one, two) = (temp.path().join("one"), temp.path().join("two"));
+        let a = folder(&one, ACC_A);
+        let b = folder(&two, ACC_A);
+        mark_deleted(&a, S1, 1_000);
+        let s1 = json!({ "title": "s1", "lastActivityAt": 1, "cliSessionId": "shared" });
+        fs::write(b.join(S1), s1.to_string()).unwrap();
+        // 另一个会话（分支出来的）也记着这份对话记录
+        let s3 = json!({ "title": "s3", "lastActivityAt": 1, "priorCliSessionIds": ["shared"] });
+        fs::write(b.join(S3), s3.to_string()).unwrap();
+        let projects = temp.path().join("projects").join("p");
+        fs::create_dir_all(&projects).unwrap();
+        fs::write(projects.join("shared.jsonl"), "{}").unwrap();
+
+        fill_with(&[(one, true), (two, true)], &places(&temp, None)).unwrap();
+        assert!(!b.join(S1).exists());
+        assert!(projects.join("shared.jsonl").exists());
+    }
+
+    #[test]
+    fn a_restored_session_comes_back_everywhere() {
+        let temp = TempDir::new().unwrap();
+        let (one, two) = (temp.path().join("one"), temp.path().join("two"));
+        let a = folder(&one, ACC_A);
+        let b = folder(&two, ACC_A);
+        session(&a, S1, "s1", 1);
+        let dirs = [(one.clone(), true), (two.clone(), true)];
+        fill_with(&dirs, &places(&temp, None)).unwrap();
+        assert!(b.join(S1).exists());
+        // 在 A 里删掉（Desktop 删文件、写标记）
+        fs::remove_file(a.join(S1)).unwrap();
+        mark_deleted(&a, S1, 1_000);
+        fill_with(&dirs, &places(&temp, None)).unwrap();
+        assert!(!b.join(S1).exists());
+
+        let report = restore_with(&dirs, id_of(S1), &places(&temp, None)).unwrap();
+        assert_eq!(report.restored, 1);
+        assert!(b.join(S1).exists());
+        assert!(!a.join(format!("{MARKER_PREFIX}{}", id_of(S1))).exists());
+        // 下次补齐补回 A，也不会再被删
+        fill_with(&dirs, &places(&temp, None)).unwrap();
+        assert!(a.join(S1).exists() && b.join(S1).exists());
+        assert!(trash::list(&temp.path().join(TRASH_DIRNAME)).is_empty());
+    }
+
+    #[test]
+    fn archiving_follows_the_folder_that_changed() {
+        let temp = TempDir::new().unwrap();
+        let (one, two) = (temp.path().join("one"), temp.path().join("two"));
+        let a = folder(&one, ACC_A);
+        let b = folder(&two, ACC_A);
+        let live = json!({ "title": "s", "lastActivityAt": 1, "isArchived": false });
+        write_doc(&a, S1, &live, 10_000);
+        write_doc(&b, S1, &live, 10_000);
+        fs::write(b.join("archived-sessions.idx"), r#"{"v":1,"archived":[]}"#).unwrap();
+        let dirs = [(one.clone(), true), (two.clone(), true)];
+        fill_with(&dirs, &places(&temp, None)).unwrap();
+
+        // 在 A 里归档
+        let archived = json!({ "title": "s", "lastActivityAt": 1, "isArchived": true, "archiveSetAtMs": 20_000 });
+        write_doc(&a, S1, &archived, 20_000);
+        let report = fill_with(&dirs, &places(&temp, None)).unwrap();
+        assert_eq!(report.sync.archived, 1);
+        let got = doc_of(&b.join(S1));
+        assert_eq!(got["isArchived"], true);
+        assert_eq!(got["archiveSetAtMs"], 20_000);
+        let idx = doc_of(&b.join("archived-sessions.idx"));
+        assert_eq!(idx["archived"], json!([format!("local_{}", id_of(S1))]));
+
+        // 再在 B 里取消归档：A 跟着取消
+        write_doc(&b, S1, &live, 30_000);
+        let report = fill_with(&dirs, &places(&temp, None)).unwrap();
+        assert_eq!(report.sync.archived, 1);
+        let got = doc_of(&a.join(S1));
+        assert_eq!(got["isArchived"], false);
+        assert!(got.get("archiveSetAtMs").is_none());
+        // 没有变化时什么都不做
+        assert_eq!(
+            fill_with(&dirs, &places(&temp, None))
+                .unwrap()
+                .sync
+                .archived,
+            0
+        );
+    }
+
+    #[test]
+    fn deleting_a_this_pc_session_elsewhere_trashes_its_workspace_and_restores_it() {
+        use crate::services::claude_desktop_scratch::WORKSPACES_DIRNAME;
+        let temp = TempDir::new().unwrap();
+        let (owner, other) = (temp.path().join("owner"), temp.path().join("other"));
+        let a = folder(&owner, ACC_A);
+        let b = folder(&other, ACC_A);
+        let ws = owner
+            .join(WORKSPACES_DIRNAME)
+            .join(ACC_A)
+            .join(ORG)
+            .join("scratch-2026-11-25-000009");
+        fs::create_dir_all(&ws).unwrap();
+        fs::write(ws.join("notes.md"), "keep me").unwrap();
+        let cwd = ws.to_string_lossy().into_owned();
+        let doc = json!({ "title": "pc", "lastActivityAt": 1, "cwd": cwd, "originCwd": cwd });
+        fs::write(a.join(S1), doc.to_string()).unwrap();
+        let dirs = [(owner.clone(), true), (other.clone(), true)];
+        fill_with(&dirs, &places(&temp, None)).unwrap();
+        let link = other
+            .join(WORKSPACES_DIRNAME)
+            .join(ACC_A)
+            .join(ORG)
+            .join("scratch-2026-11-25-000009");
+        assert!(b.join(S1).exists() && link.join("notes.md").exists());
+
+        // 在 B 里删除：Desktop 删列表文件、删链接（只是链接）、写标记
+        fs::remove_file(b.join(S1)).unwrap();
+        crate::services::claude_desktop_scratch::remove_link(&link).unwrap();
+        mark_deleted(&b, S1, 1_000);
+        fill_with(&dirs, &places(&temp, None)).unwrap();
+        assert!(!a.join(S1).exists());
+        assert!(!ws.exists(), "没人用的工作区挪进回收站");
+        let listed = trash::list(&temp.path().join(TRASH_DIRNAME));
+        assert_eq!(listed.len(), 1);
+
+        let report = restore_with(&dirs, id_of(S1), &places(&temp, None)).unwrap();
+        assert_eq!(report.restored, 1);
+        assert_eq!(fs::read_to_string(ws.join("notes.md")).unwrap(), "keep me");
+        assert!(a.join(S1).exists());
+        // 下次补齐 B 又有了，链接重新建上
+        fill_with(&dirs, &places(&temp, None)).unwrap();
+        assert!(b.join(S1).exists() && link.join("notes.md").exists());
+    }
+
+    #[test]
+    fn with_sync_off_only_the_folder_that_deleted_is_left_alone() {
+        let temp = TempDir::new().unwrap();
+        let (one, two) = (temp.path().join("one"), temp.path().join("two"));
+        let a = folder(&one, ACC_A);
+        let b = folder(&two, ACC_A);
+        let mut seen = Seen::default();
+        seen.sync.enabled = false;
+        seen.save(&temp.path().join(SEEN_FILENAME)).unwrap();
+        mark_deleted(&a, S1, 1_000);
+        session(&b, S1, "s1", 1);
+
+        let report = fill_with(&[(one, true), (two, true)], &places(&temp, None)).unwrap();
+        assert_eq!(report.sync.trashed, 0);
+        assert!(b.join(S1).exists());
+        assert!(!a.join(S1).exists());
     }
 
     #[test]

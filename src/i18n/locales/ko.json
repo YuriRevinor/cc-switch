@@ -361,6 +361,27 @@
       "quitConfirm": "종료하고 열기",
       "firstLoginMessage": "이 계정을 처음 여는 것입니다. 열리는 Desktop에서 {{login}}(으)로 로그인하세요. 로그인은 이 계정 전용 데이터 폴더에 남으므로, 이후 이 카드로 전환하면 이 계정을 사용합니다.",
       "firstLoginConfirm": "열고 로그인"
+    },
+    "sessionSync": {
+      "title": "계정 간 삭제 및 보관 동기화",
+      "description": "어느 계정에서든 Code 세션을 삭제하거나 보관하면 다른 계정에도 반영됩니다. 삭제된 항목은 휴지통으로 옮겨지며 복원할 수 있습니다. 다음에 CC Switch로 Claude Desktop을 열 때 적용됩니다.",
+      "trashButton": "최근 삭제됨 ({{count}})",
+      "trashTitle": "최근 삭제된 세션",
+      "trashDescription": "한 계정에서 삭제된 뒤 CC Switch가 다른 계정의 사본(및 더 이상 쓰이지 않는 대화 기록·작업 공간)을 여기로 옮겼습니다. 복원하면 모든 계정에 다시 나타납니다. 해당 Claude Desktop이 실행 중이면 종료한 뒤 복원하세요.",
+      "trashEmpty": "휴지통이 비어 있습니다",
+      "untitled": "(제목 없음)",
+      "copies": "사본 {{count}}개",
+      "withTranscripts": "대화 기록 포함",
+      "restore": "복원",
+      "restored": "\"{{title}}\"을(를) 복원했습니다. 다음에 Claude Desktop을 열면 모든 계정에 돌아옵니다",
+      "restoredWaiting": "\"{{title}}\"을(를) 복원했습니다. 나머지 {{count}}개는 해당 Claude Desktop을 종료한 뒤 다시 복원하세요",
+      "restoreFailed": "복원 실패: {{detail}}",
+      "emptyTrash": "휴지통 비우기",
+      "emptyConfirmMessage": "휴지통의 세션, 대화 기록, 작업 공간이 영구 삭제되며 되돌릴 수 없습니다.",
+      "emptied": "휴지통을 비웠습니다",
+      "emptyFailed": "휴지통을 비우지 못했습니다: {{detail}}",
+      "toggleFailed": "설정을 바꾸지 못했습니다: {{detail}}",
+      "synced": "다른 계정에서도 세션 {{count}}개를 삭제했습니다. 최근 삭제됨에서 복원할 수 있습니다"
     }
   },
   "notifications": {

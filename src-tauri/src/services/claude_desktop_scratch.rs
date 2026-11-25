@@ -106,7 +106,7 @@ pub(crate) fn relocate(doc: &Value, place: &Move, project_dirs: &[PathBuf]) -> O
 
 /// 新工作区已经是指向原工作区的链接（或者就是原工作区）时什么都不做；不在时建链接。原工作区已经不在
 /// 了（被 Desktop 清理掉）就建一个空目录，会话还能打开。
-fn ensure_link(link: &Path, original: &Path) -> io::Result<()> {
+pub(crate) fn ensure_link(link: &Path, original: &Path) -> io::Result<()> {
     match fs::symlink_metadata(link) {
         Ok(_) => {
             let same = matches!(
@@ -181,6 +181,15 @@ fn link_dir(link: &Path, target: &Path) -> io::Result<()> {
 #[cfg(not(windows))]
 fn link_dir(link: &Path, target: &Path) -> io::Result<()> {
     std::os::unix::fs::symlink(target, link)
+}
+
+/// 删掉一个目录链接本身（不进它指向的目录）。不是链接时报错、不动。
+pub(crate) fn remove_link(link: &Path) -> io::Result<()> {
+    if !fs::symlink_metadata(link)?.file_type().is_symlink() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "不是链接"));
+    }
+    // Windows 上 junction 和目录符号链接要按目录删
+    fs::remove_dir(link).or_else(|_| fs::remove_file(link))
 }
 
 /// 把所有以 `old` 开头的路径字符串换成以 `new` 开头。名字里带 `realpath` 的字段不改。

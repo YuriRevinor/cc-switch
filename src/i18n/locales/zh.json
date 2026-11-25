@@ -361,6 +361,27 @@
       "quitConfirm": "退出并打开",
       "firstLoginMessage": "这是第一次用这个账号打开：在打开的 Desktop 里登录 {{login}}，登录保存在这个账号单独的数据目录里，以后切到这张卡就是这个号。",
       "firstLoginConfirm": "打开并登录"
+    },
+    "sessionSync": {
+      "title": "多账号同步删除和归档",
+      "description": "在任一账号里删除或归档 Code 会话，其他账号跟着删除或归档；删掉的先放进回收站，可以恢复。下次通过 CC Switch 打开 Claude Desktop 时生效。",
+      "trashButton": "最近删除（{{count}}）",
+      "trashTitle": "最近删除的会话",
+      "trashDescription": "在某个账号里删除后，CC Switch 把其他账号里的副本（以及不再用到的对话记录、工作区）挪到了这里。恢复后会重新出现在所有账号里；对应的 Claude Desktop 开着时，要等它退出后再恢复。",
+      "trashEmpty": "回收站是空的",
+      "untitled": "（无标题）",
+      "copies": "{{count}} 份副本",
+      "withTranscripts": "含对话记录",
+      "restore": "恢复",
+      "restored": "已恢复「{{title}}」，下次打开 Claude Desktop 时补回所有账号",
+      "restoredWaiting": "已恢复「{{title}}」，还有 {{count}} 份要等对应的 Claude Desktop 退出后再点一次恢复",
+      "restoreFailed": "恢复失败：{{detail}}",
+      "emptyTrash": "清空回收站",
+      "emptyConfirmMessage": "回收站里的会话、对话记录和工作区会被永久删除，不能恢复。",
+      "emptied": "回收站已清空",
+      "emptyFailed": "清空失败：{{detail}}",
+      "toggleFailed": "设置失败：{{detail}}",
+      "synced": "已在其他账号同步删除 {{count}} 个会话，可在「最近删除」里恢复"
     }
   },
   "notifications": {

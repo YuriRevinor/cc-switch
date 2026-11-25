@@ -361,6 +361,27 @@
       "quitConfirm": "Beenden und öffnen",
       "firstLoginMessage": "Dieses Konto wird zum ersten Mal geöffnet: Melde dich im geöffneten Desktop bei {{login}} an. Die Anmeldung bleibt im eigenen Datenordner dieses Kontos, sodass ein Wechsel zu dieser Karte ab dann dieses Konto verwendet.",
       "firstLoginConfirm": "Öffnen und anmelden"
+    },
+    "sessionSync": {
+      "title": "Löschen und Archivieren kontoübergreifend synchronisieren",
+      "description": "Wird eine Code-Sitzung in einem Konto gelöscht oder archiviert, folgen die anderen Konten. Gelöschte Kopien landen in einem Papierkorb und lassen sich wiederherstellen. Wirkt beim nächsten Öffnen von Claude Desktop über CC Switch.",
+      "trashButton": "Zuletzt gelöscht ({{count}})",
+      "trashTitle": "Zuletzt gelöschte Sitzungen",
+      "trashDescription": "Nachdem eine Sitzung in einem Konto gelöscht wurde, hat CC Switch ihre Kopien in den anderen Konten (und nicht mehr genutzte Verläufe oder Arbeitsbereiche) hierher verschoben. Wiederherstellen bringt sie in allen Konten zurück; läuft das betreffende Claude Desktop, zuerst beenden.",
+      "trashEmpty": "Der Papierkorb ist leer",
+      "untitled": "(ohne Titel)",
+      "copies": "{{count}} Kopien",
+      "withTranscripts": "mit Verlauf",
+      "restore": "Wiederherstellen",
+      "restored": "„{{title}}“ wiederhergestellt; beim nächsten Öffnen von Claude Desktop ist sie in allen Konten zurück",
+      "restoredWaiting": "„{{title}}“ wiederhergestellt; {{count}} weitere Kopien warten, bis das betreffende Claude Desktop beendet ist – dann erneut wiederherstellen",
+      "restoreFailed": "Wiederherstellen fehlgeschlagen: {{detail}}",
+      "emptyTrash": "Papierkorb leeren",
+      "emptyConfirmMessage": "Sitzungen, Verläufe und Arbeitsbereiche im Papierkorb werden endgültig gelöscht. Das lässt sich nicht rückgängig machen.",
+      "emptied": "Papierkorb geleert",
+      "emptyFailed": "Papierkorb konnte nicht geleert werden: {{detail}}",
+      "toggleFailed": "Einstellung konnte nicht geändert werden: {{detail}}",
+      "synced": "{{count}} Sitzungen auch in den anderen Konten gelöscht; unter „Zuletzt gelöscht“ wiederherstellbar"
     }
   },
   "notifications": {

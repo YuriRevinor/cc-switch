@@ -19,3 +19,43 @@ pub async fn open_claude_desktop(account_key: String) -> Result<bool, String> {
         .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())
 }
+
+/// 会话同步开关和回收站里的会话。
+#[tauri::command]
+pub async fn get_claude_desktop_session_sync(
+) -> Result<crate::services::claude_desktop_sessions::SessionSyncStatus, String> {
+    tokio::task::spawn_blocking(crate::services::claude_desktop_sessions::sync_status)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// 打开/关闭多账号同步删除和归档。
+#[tauri::command]
+pub async fn set_claude_desktop_session_sync(enabled: bool) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        crate::services::claude_desktop_sessions::set_sync_enabled(enabled)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())
+}
+
+/// 从回收站恢复一个会话。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn restore_claude_desktop_session(
+    session_id: String,
+) -> Result<crate::services::claude_desktop_trash::RestoreReport, String> {
+    tokio::task::spawn_blocking(move || claude_desktop_account::restore_session(&session_id))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
+}
+
+/// 清空会话回收站（永久删除）。
+#[tauri::command]
+pub async fn empty_claude_desktop_session_trash() -> Result<(), String> {
+    tokio::task::spawn_blocking(crate::services::claude_desktop_sessions::empty_trash)
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
+}

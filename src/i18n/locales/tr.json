@@ -361,6 +361,27 @@
       "quitConfirm": "Kapat ve aç",
       "firstLoginMessage": "Bu hesap ilk kez açılıyor: açılan Desktop'ta {{login}} ile oturum açın. Oturum bu hesabın kendi veri klasöründe kalır; bundan sonra bu karta geçmek bu hesabı kullanır.",
       "firstLoginConfirm": "Aç ve oturum aç"
+    },
+    "sessionSync": {
+      "title": "Silme ve arşivlemeyi hesaplar arasında eşitle",
+      "description": "Bir Code oturumunu herhangi bir hesapta silin veya arşivleyin, diğer hesaplar da aynısını yapar. Silinen kopyalar geri yüklenebilen bir çöp kutusuna gider. Claude Desktop'ı CC Switch ile bir sonraki açışınızda uygulanır.",
+      "trashButton": "Son silinenler ({{count}})",
+      "trashTitle": "Son silinen oturumlar",
+      "trashDescription": "Bir oturum bir hesapta silindikten sonra CC Switch, diğer hesaplardaki kopyalarını (ve artık kullanılmayan geçmiş ile çalışma alanlarını) buraya taşıdı. Geri yüklemek onu tüm hesaplara geri getirir; ilgili Claude Desktop açıksa önce kapatın.",
+      "trashEmpty": "Çöp kutusu boş",
+      "untitled": "(başlıksız)",
+      "copies": "{{count}} kopya",
+      "withTranscripts": "geçmiş dahil",
+      "restore": "Geri yükle",
+      "restored": "\"{{title}}\" geri yüklendi; Claude Desktop bir sonraki açılışta tüm hesaplarda geri gelir",
+      "restoredWaiting": "\"{{title}}\" geri yüklendi; {{count}} kopya daha ilgili Claude Desktop kapanana kadar bekliyor, sonra yeniden geri yükleyin",
+      "restoreFailed": "Geri yükleme başarısız: {{detail}}",
+      "emptyTrash": "Çöp kutusunu boşalt",
+      "emptyConfirmMessage": "Çöp kutusundaki oturumlar, geçmişler ve çalışma alanları kalıcı olarak silinir. Bu geri alınamaz.",
+      "emptied": "Çöp kutusu boşaltıldı",
+      "emptyFailed": "Çöp kutusu boşaltılamadı: {{detail}}",
+      "toggleFailed": "Ayar değiştirilemedi: {{detail}}",
+      "synced": "Diğer hesaplarda da {{count}} oturum silindi; Son silinenler'den geri yükleyebilirsiniz"
     }
   },
   "notifications": {

@@ -244,21 +244,15 @@ fn open_dir(profile_dir: Option<PathBuf>, first_party: bool) -> Result<bool, App
     }
 
     // 补不了会话也照样打开
-    let dirs: Vec<(PathBuf, bool)> = default_dir()
-        .map(|dir| (None, dir))
-        .into_iter()
-        .chain(
-            profile_dirs()
-                .into_iter()
-                .map(|(_, dir)| (Some(dir.clone()), dir)),
-        )
-        .map(|(launch, dir)| {
-            let idle = instances.pid_of(launch.as_deref()).is_none();
-            (dir, idle)
-        })
-        .collect();
-    if let Err(error) = crate::services::claude_desktop_sessions::fill(&dirs) {
-        log::info!("[DesktopAccount] 打开前没有补齐会话: {error}");
+    match crate::services::claude_desktop_sessions::fill(&session_dirs(&instances)) {
+        Ok(report) => log::info!(
+            "[DesktopAccount] 会话：补上 {}，同步删除 {}（留着 {}），同步归档 {}",
+            report.added,
+            report.sync.trashed,
+            report.sync.kept,
+            report.sync.archived
+        ),
+        Err(error) => log::info!("[DesktopAccount] 打开前没有补齐会话: {error}"),
     }
 
     // 没开着才启动：Desktop 不拦同一个数据目录再开一个
@@ -274,6 +268,33 @@ fn open_dir(profile_dir: Option<PathBuf>, first_party: bool) -> Result<bool, App
         }
     );
     Ok(first_login)
+}
+
+/// 所有 Desktop 数据目录（默认的和各账号目录），以及各自能不能写（那个 Desktop 没开着）。
+fn session_dirs(instances: &DesktopInstances) -> Vec<(PathBuf, bool)> {
+    default_dir()
+        .map(|dir| (None, dir))
+        .into_iter()
+        .chain(
+            profile_dirs()
+                .into_iter()
+                .map(|(_, dir)| (Some(dir.clone()), dir)),
+        )
+        .map(|(launch, dir)| {
+            let idle = instances.pid_of(launch.as_deref()).is_none();
+            (dir, idle)
+        })
+        .collect()
+}
+
+/// 从回收站恢复一个同步删除的会话（见 `claude_desktop_sessions::restore`）。
+pub fn restore_session(
+    session_id: &str,
+) -> Result<crate::services::claude_desktop_trash::RestoreReport, AppError> {
+    crate::services::claude_desktop_sessions::restore(
+        &session_dirs(&running_instances()),
+        session_id,
+    )
 }
 
 /// 所有账号目录的根。

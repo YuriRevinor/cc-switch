@@ -361,6 +361,27 @@
       "quitConfirm": "終了して開く",
       "firstLoginMessage": "このアカウントで初めて開きます：開いた Desktop で {{login}} にサインインしてください。サインインはこのアカウント専用のデータフォルダに保存され、以後このカードに切り替えるとこのアカウントになります。",
       "firstLoginConfirm": "開いてサインイン"
+    },
+    "sessionSync": {
+      "title": "アカウント間で削除とアーカイブを同期",
+      "description": "どのアカウントで Code セッションを削除・アーカイブしても、他のアカウントにも反映します。削除したものはゴミ箱に移り、復元できます。次に CC Switch から Claude Desktop を開いたときに反映されます。",
+      "trashButton": "最近削除した項目（{{count}}）",
+      "trashTitle": "最近削除したセッション",
+      "trashDescription": "あるアカウントで削除されたあと、CC Switch が他のアカウントのコピー（と使われなくなった会話履歴・ワークスペース）をここへ移しました。復元すると全アカウントに戻ります。該当の Claude Desktop が起動中なら、終了してから復元してください。",
+      "trashEmpty": "ゴミ箱は空です",
+      "untitled": "（無題）",
+      "copies": "コピー {{count}} 件",
+      "withTranscripts": "会話履歴あり",
+      "restore": "復元",
+      "restored": "「{{title}}」を復元しました。次に Claude Desktop を開くと全アカウントに戻ります",
+      "restoredWaiting": "「{{title}}」を復元しました。残り {{count}} 件は該当の Claude Desktop を終了してからもう一度復元してください",
+      "restoreFailed": "復元に失敗しました：{{detail}}",
+      "emptyTrash": "ゴミ箱を空にする",
+      "emptyConfirmMessage": "ゴミ箱のセッション・会話履歴・ワークスペースは完全に削除され、元に戻せません。",
+      "emptied": "ゴミ箱を空にしました",
+      "emptyFailed": "ゴミ箱を空にできませんでした：{{detail}}",
+      "toggleFailed": "設定を変更できませんでした：{{detail}}",
+      "synced": "他のアカウントでも {{count}} 件のセッションを削除しました。「最近削除した項目」から復元できます"
     }
   },
   "notifications": {

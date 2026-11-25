@@ -361,6 +361,27 @@
       "quitConfirm": "Quit and open",
       "firstLoginMessage": "This is the first time this account is opened: sign in to {{login}} in the Desktop that opens. The sign-in stays in this account's own data folder, so switching to this card uses this account from then on.",
       "firstLoginConfirm": "Open and sign in"
+    },
+    "sessionSync": {
+      "title": "Sync deletes and archives across accounts",
+      "description": "Delete or archive a Code session in any account and the other accounts follow. Deleted copies go to a trash you can restore from. Applies the next time you open Claude Desktop through CC Switch.",
+      "trashButton": "Recently deleted ({{count}})",
+      "trashTitle": "Recently deleted sessions",
+      "trashDescription": "After a session was deleted in one account, CC Switch moved its copies in the other accounts (and transcripts or workspaces nothing else uses) here. Restoring brings it back in every account; if that Claude Desktop is running, quit it first.",
+      "trashEmpty": "The trash is empty",
+      "untitled": "(untitled)",
+      "copies": "{{count}} copies",
+      "withTranscripts": "with transcript",
+      "restore": "Restore",
+      "restored": "Restored \"{{title}}\"; it comes back in every account the next time Claude Desktop opens",
+      "restoredWaiting": "Restored \"{{title}}\"; {{count}} more copies wait until that Claude Desktop quits, then restore again",
+      "restoreFailed": "Restore failed: {{detail}}",
+      "emptyTrash": "Empty trash",
+      "emptyConfirmMessage": "Sessions, transcripts and workspaces in the trash will be deleted permanently. This can't be undone.",
+      "emptied": "Trash emptied",
+      "emptyFailed": "Couldn't empty the trash: {{detail}}",
+      "toggleFailed": "Couldn't change the setting: {{detail}}",
+      "synced": "Deleted {{count}} sessions in the other accounts too; restore them from Recently deleted"
     }
   },
   "notifications": {

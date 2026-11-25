@@ -20,6 +20,30 @@ export interface DesktopProfilesStatus {
   profiles: DesktopProfile[];
 }
 
+/** 回收站里一个同步删除的会话 */
+export interface SessionTrashEntry {
+  sessionId: string;
+  title: string;
+  /** 最近一次挪进回收站的时间（毫秒） */
+  trashedAt: number;
+  /** 挪进来的会话列表文件份数（几个账号里的） */
+  copies: number;
+  /** 一起挪进来的对话记录份数 */
+  transcripts: number;
+}
+
+export interface SessionSyncStatus {
+  /** 多账号同步删除和归档 */
+  enabled: boolean;
+  trash: SessionTrashEntry[];
+}
+
+export interface SessionRestoreReport {
+  restored: number;
+  /** 对应的 Desktop 开着、或原处已有文件，暂时留在回收站的份数 */
+  waiting: number;
+}
+
 export const claudeDesktopAccountsApi = {
   async getProfiles(): Promise<DesktopProfilesStatus> {
     return await invoke("get_claude_desktop_profiles");
@@ -31,6 +55,22 @@ export const claudeDesktopAccountsApi = {
    */
   async open(accountKey: string): Promise<boolean> {
     return await invoke("open_claude_desktop", { accountKey });
+  },
+
+  async getSessionSync(): Promise<SessionSyncStatus> {
+    return await invoke("get_claude_desktop_session_sync");
+  },
+
+  async setSessionSync(enabled: boolean): Promise<void> {
+    await invoke("set_claude_desktop_session_sync", { enabled });
+  },
+
+  async restoreSession(sessionId: string): Promise<SessionRestoreReport> {
+    return await invoke("restore_claude_desktop_session", { sessionId });
+  },
+
+  async emptySessionTrash(): Promise<void> {
+    await invoke("empty_claude_desktop_session_trash");
   },
 };
 

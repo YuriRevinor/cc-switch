@@ -361,6 +361,27 @@
       "quitConfirm": "結束並開啟",
       "firstLoginMessage": "這是第一次用這個帳號開啟：在開啟的 Desktop 裡登入 {{login}}，登入保存在這個帳號單獨的資料目錄裡，之後切到這張卡就是這個帳號。",
       "firstLoginConfirm": "開啟並登入"
+    },
+    "sessionSync": {
+      "title": "多帳號同步刪除和封存",
+      "description": "在任一帳號裡刪除或封存 Code 工作階段，其他帳號跟著刪除或封存；刪掉的先放進回收站，可以還原。下次透過 CC Switch 開啟 Claude Desktop 時生效。",
+      "trashButton": "最近刪除（{{count}}）",
+      "trashTitle": "最近刪除的工作階段",
+      "trashDescription": "在某個帳號裡刪除後，CC Switch 把其他帳號裡的副本（以及不再用到的對話紀錄、工作區）移到了這裡。還原後會重新出現在所有帳號裡；對應的 Claude Desktop 開著時，要等它結束後再還原。",
+      "trashEmpty": "回收站是空的",
+      "untitled": "（無標題）",
+      "copies": "{{count}} 份副本",
+      "withTranscripts": "含對話紀錄",
+      "restore": "還原",
+      "restored": "已還原「{{title}}」，下次開啟 Claude Desktop 時補回所有帳號",
+      "restoredWaiting": "已還原「{{title}}」，還有 {{count}} 份要等對應的 Claude Desktop 結束後再點一次還原",
+      "restoreFailed": "還原失敗：{{detail}}",
+      "emptyTrash": "清空回收站",
+      "emptyConfirmMessage": "回收站裡的工作階段、對話紀錄和工作區會被永久刪除，無法還原。",
+      "emptied": "回收站已清空",
+      "emptyFailed": "清空失敗：{{detail}}",
+      "toggleFailed": "設定失敗：{{detail}}",
+      "synced": "已在其他帳號同步刪除 {{count}} 個工作階段，可在「最近刪除」裡還原"
     }
   },
   "notifications": {

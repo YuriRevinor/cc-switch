@@ -238,18 +238,20 @@ fn open_dir(profile_dir: Option<PathBuf>, first_party: bool) -> Result<bool, App
         fs::create_dir_all(dir).map_err(|e| AppError::io(dir, e))?;
     }
 
-    // 已经开着：先叫到前面（不用等补齐，它的目录本来就不补），再给别的目录补齐
+    // 已经开着（比如关到了托盘）：只叫到前面，不扫描会话。它的目录本来就不写；别的目录在它们的 Desktop
+    // 退出时已经由后台同步过（见 `start_background_sync`），留到这个 Desktop 退出后再集中处理
     if let Some(pid) = target_pid {
         bring_to_front(pid, profile_dir.as_deref());
+        log::info!("[DesktopAccount] Claude Desktop 已经开着，叫到前面");
+        return Ok(first_login);
     }
 
-    // 补不了会话也照样打开。平常后台已经同步过（见 `start_background_sync`），这里只是核对一遍
+    // 补不了会话也照样打开。平常后台已经同步过，这里只是核对一遍：后台每 3 秒才看一次，
+    // 刚退出就重新打开时靠这一步
     sync_sessions(&instances, "打开前");
 
-    // 没开着才启动：Desktop 不拦同一个数据目录再开一个
-    if target_pid.is_none() {
-        launch(profile_dir.as_deref(), first_party)?;
-    }
+    // Desktop 不拦同一个数据目录再开一个，所以只在没开着时启动
+    launch(profile_dir.as_deref(), first_party)?;
     log::info!(
         "[DesktopAccount] 已打开 Claude Desktop（{}）",
         if profile_dir.is_some() {

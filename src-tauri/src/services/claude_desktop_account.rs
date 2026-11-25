@@ -238,6 +238,11 @@ fn open_dir(profile_dir: Option<PathBuf>, first_party: bool) -> Result<bool, App
         fs::create_dir_all(dir).map_err(|e| AppError::io(dir, e))?;
     }
 
+    // 已经开着：先叫到前面（不用等补齐，它的目录本来就不补），再给别的目录补齐
+    if let Some(pid) = target_pid {
+        bring_to_front(pid, profile_dir.as_deref());
+    }
+
     // 补不了会话也照样打开
     let dirs: Vec<(PathBuf, bool)> = default_dir()
         .map(|dir| (None, dir))
@@ -256,10 +261,9 @@ fn open_dir(profile_dir: Option<PathBuf>, first_party: bool) -> Result<bool, App
         log::info!("[DesktopAccount] 打开前没有补齐会话: {error}");
     }
 
-    // 已经开着就只叫到前面：Desktop 不拦同一个数据目录再开一个
-    match target_pid {
-        Some(pid) => bring_to_front(pid, profile_dir.as_deref()),
-        None => launch(profile_dir.as_deref(), first_party)?,
+    // 没开着才启动：Desktop 不拦同一个数据目录再开一个
+    if target_pid.is_none() {
+        launch(profile_dir.as_deref(), first_party)?;
     }
     log::info!(
         "[DesktopAccount] 已打开 Claude Desktop（{}）",
@@ -557,8 +561,9 @@ fn launch_macos(profile_dir: Option<&Path>) -> Result<(), AppError> {
 ///
 /// - macOS：同一个 `Claude.app` 可能开着好几个（各自的数据目录），`open -a` 挑不了是哪个，所以按
 ///   进程号找；
-/// - Windows：用同一个数据目录再启动一次。Desktop 按数据目录拿单实例锁，新进程把启动交给开着的那个
-///   （它把窗口叫出来，缩在托盘里也一样）就退出。
+/// - Windows：窗口开着（含最小化）就直接把它拿到前台，最快；缩在托盘里或拿不到前台（系统不让后台
+///   程序抢焦点）时，用同一个数据目录再启动一次。Desktop 按数据目录拿单实例锁，新进程把启动交给开着的
+///   那个（它把窗口叫出来）就退出，要多等一个 Electron 进程起来。
 fn bring_to_front(pid: u32, profile_dir: Option<&Path>) {
     #[cfg(target_os = "macos")]
     {
@@ -589,7 +594,9 @@ fn bring_to_front(pid: u32, profile_dir: Option<&Path>) {
     }
     #[cfg(windows)]
     {
-        let _ = pid;
+        if win::activate_window(pid) {
+            return;
+        }
         if let Err(error) = win::launch(profile_dir, false) {
             log::info!("[DesktopAccount] 没能把开着的 Claude Desktop 叫到前面: {error}");
         }
@@ -681,6 +688,59 @@ mod win {
             .spawn()
             .map(drop)
             .map_err(|e| AppError::Message(format!("打开 Claude Desktop 失败: {e}")))
+    }
+
+    /// 把进程 `pid` 的主窗口（看得见、没有所有者、有标题的顶层窗口）拿到前台，最小化的先还原。
+    /// 没有这样的窗口（缩在托盘里）或系统不让拿到前台时为 `false`。
+    pub(super) fn activate_window(pid: u32) -> bool {
+        use windows_sys::Win32::Foundation::{HWND, LPARAM};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GetForegroundWindow, GetWindow, GetWindowTextLengthW,
+            GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow,
+            GW_OWNER, SW_RESTORE,
+        };
+
+        struct Search {
+            pid: u32,
+            found: HWND,
+        }
+
+        unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> i32 {
+            // SAFETY: lparam 是下面传进来的 `&mut Search`，EnumWindows 返回前一直有效
+            let search = unsafe { &mut *(lparam as *mut Search) };
+            let mut owner_pid = 0u32;
+            // SAFETY: hwnd 由 EnumWindows 给出；owner_pid 是有效的输出指针
+            unsafe {
+                GetWindowThreadProcessId(hwnd, &mut owner_pid);
+                if owner_pid == search.pid
+                    && IsWindowVisible(hwnd) != 0
+                    && GetWindow(hwnd, GW_OWNER).is_null()
+                    && GetWindowTextLengthW(hwnd) > 0
+                {
+                    search.found = hwnd;
+                    return 0;
+                }
+            }
+            1
+        }
+
+        let mut search = Search {
+            pid,
+            found: std::ptr::null_mut(),
+        };
+        // SAFETY: 回调只在 EnumWindows 执行期间用 `search`
+        unsafe { EnumWindows(Some(visit), &mut search as *mut Search as LPARAM) };
+        let hwnd = search.found;
+        if hwnd.is_null() {
+            return false;
+        }
+        // SAFETY: hwnd 是刚找到的顶层窗口；窗口没了时这些调用只是失败
+        unsafe {
+            if IsIconic(hwnd) != 0 {
+                ShowWindow(hwnd, SW_RESTORE);
+            }
+            SetForegroundWindow(hwnd) != 0 && GetForegroundWindow() == hwnd
+        }
     }
 
     pub(super) fn running_instances() -> DesktopInstances {

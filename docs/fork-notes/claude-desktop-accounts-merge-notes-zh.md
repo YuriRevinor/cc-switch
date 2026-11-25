@@ -16,12 +16,14 @@
 | `f7a70673` | fix(claude-desktop): don't re-add deleted sessions or ones whose transcript is gone | 本地 |
 | `5fd1eea4` | fix(claude-desktop): never quit or auto-start Claude Desktop; keep 1P sign-in | 本地 |
 | `f4c167e4` | feat(claude-desktop): --open-claude-desktop command-line flag for hotkeys | 本地 |
+| `7460123a` | Claude Desktop: scratch sessions copied across data dirs show as 此电脑 (junction + transcript hardlinks) | 本地 |
+| （下一个） | feat(claude-desktop): cc-switch-open.exe hotkey launcher; activate a running Desktop directly | 本地 |
 
 合计 42 个文件，约 +2600 / −150 行（`git diff --stat 99f4bae5..HEAD`）。
 
-**合并上游的推荐做法**：在新的上游主线上依次 `git cherry-pick d70f706d d2d7b9a9 f7a70673 5fd1eea4 f4c167e4`，
-每一步解决冲突、跑第 6 节的检查。如果上游已经合入了 Dey410 的提交（搜 `claude_desktop_account.rs`
-是否存在），就跳过 `d70f706d`，把后面四个提交在上游版本上重新套用。
+**合并上游的推荐做法**：在新的上游主线上按上表顺序逐个 `git cherry-pick`（用 `git log --oneline 99f4bae5..HEAD`
+取完整列表），每一步解决冲突、跑第 6 节的检查。如果上游已经合入了 Dey410 的提交（搜 `claude_desktop_account.rs`
+是否存在），就跳过 `d70f706d`，把后面的提交在上游版本上重新套用。
 
 ## 2. 功能概览（最终行为）
 
@@ -39,6 +41,9 @@
    给 PowerToys 等快捷键工具用，见第 5 节。
 6. **Code 会话补齐**：Desktop「Code」标签页的会话列表是按账号分开存的，对话记录却和账号无关。打开 Desktop 前，
    把各账号文件夹缺的会话列表文件从别处复制过去。只补缺，不覆盖、不删除（`f7a70673` 又加了两条不补的规则，见 4.3）。
+7. **「此电脑」会话**（`7460123a`）：没选文件夹的会话复制到别的数据目录后仍显示为「此电脑」，
+   靠目录链接 + 对话记录硬链接实现，见 4.5。
+8. **快捷键启动器 `cc-switch-open.exe`**：比 `cc-switch.exe --open-claude-desktop` 快，见第 5 节。
 
 ## 3. 文件清单（按提交）
 
@@ -138,6 +143,34 @@
   - `app.manage(app_state)` 之后调用 `open_from_command_line`。
 - 合并时注意：`lib.rs` 是上游改动最多的文件之一。这几处只是插入代码，冲突了照着上面的位置重新插入即可。
 
+### 3.6 `7460123a`（「此电脑」会话）
+
+- **新增** `services/claude_desktop_scratch.rs`：识别别的数据目录的 scratch 会话、建目录链接、硬链接对话记录、
+  改会话文件里的路径；`project_slug()` 复刻 Claude Code 的项目目录命名（含超过 200 字符时的哈希后缀）。
+- `services/claude_desktop_sessions.rs`：
+  - `Session` 多存一份解析好的 `doc`；
+  - `fill_with(dirs, &Places)`：`Places` 里有记录文件、备份目录、还在的对话记录、projects 目录；
+  - 补齐前先就地转换以前原样复制过来的 scratch 会话（先备份到 `~/.cc-switch/claude-desktop-sessions-backup/<时间>/<账号>/<组织>/`）；
+  - 复制时如果是别的数据目录的 scratch 会话，写入改过路径的版本（`write_if_absent`），否则原样复制。
+- `services/mod.rs`：注册模块。
+
+### 3.7 快捷键启动器、直接激活窗口
+
+- **新增** `src-tauri/src/bin/cc-switch-open.rs`（第二个 `[[bin]]`，release 约 280 KB）：
+  - 找 single-instance 插件的消息窗口 `com.ccswitch.desktop-sic` / `com.ccswitch.desktop-siw`，
+    用 `WM_COPYDATA`（`dwData = 1542`，内容 `"<cwd>|<cc-switch.exe 路径>|--open-claude-desktop\0"`）把参数发过去；
+  - 发之前 `AllowSetForegroundWindow(ASFW_ANY)`，让 CC Switch 能把 Desktop 拿到前台；
+  - 找不到窗口（CC Switch 没开）就启动同目录的 `cc-switch.exe --open-claude-desktop`。
+  - **合并时注意**：协议照抄 `tauri-plugin-single-instance` 2.4.0 的 `platform_impl/windows.rs`。插件升级后要核对
+    类名、`dwData` 和分隔符；如果打开了插件的 `semver` feature，窗口类名会带版本号，启动器要跟着改。
+    `IDENTIFIER` 要和 `tauri.conf.json` 一致。
+- `src-tauri/Cargo.toml`：`[package] default-run = "cc-switch"`；新增 `[[bin]] cc-switch-open`；`windows-sys` 加
+  `Win32_System_DataExchange`。
+- `services/claude_desktop_account.rs`：
+  - `open_dir`：目标 Desktop 已经开着时**先**叫到前面，再补齐别的目录；没开着时照旧先补齐再启动；
+  - `win::activate_window(pid)`：枚举顶层窗口，找到这个进程看得见、没有所有者、有标题的窗口，最小化的先还原，
+    `SetForegroundWindow`。找不到（缩在托盘里）或拿不到前台时，退回原来的「同目录再启动一次」。
+
 ## 4. 关键设计和踩过的坑（换上游版本时最容易出问题的地方）
 
 ### 4.1 Claude Desktop（Windows MSIX 版，包名 `Claude_pzs8sxrjxfjjc`）的行为
@@ -187,6 +220,31 @@
      这份记录只加不减。文件夹整个空了的时候不按记录挡，记录也重新开始。
 - 记录文件读坏了，就从空的开始；写不进去，只记一条警告。最坏的结果只是删过的会话再被补回来一次。
 
+### 4.5 「此电脑」会话（`claude_desktop_scratch.rs`）
+
+- Desktop 给没选文件夹的会话建临时工作区 `<数据目录>\scratch-workspaces\<accountUuid>\<orgUuid>\scratch-<日期>-<6 位>`，
+  会话的 `originCwd` 指向它。侧栏只在 `originCwd` 落在**当前** `app.getPath('userData')\scratch-workspaces\<a>\<b>\<c>`
+  下（任何账号都行）时显示「此电脑」，否则显示文件夹名（例如 `scratch-2026-11-12-71ff96`）。
+- 所以把别的数据目录的这种会话放进数据目录 D 时：
+  1. 在 `D\scratch-workspaces\<目标文件夹的账号>\<组织>\<同名>` 建目录链接（Windows 用 `cmd /D /C mklink /J`，
+     不需要管理员；别处用符号链接），指向原工作区的 canonical 路径（去掉 `\\?\`）。原工作区已经不在了就建空目录；
+     那个位置已有别的东西就放弃，照旧原样复制。路径含 `"` 或 `%` 时不调 cmd。
+  2. 把 `cliSessionId`、`priorCliSessionIds` 对应的 `<id>.jsonl` 和 `<id>/` 子目录，从旧 cwd 的项目目录硬链接到
+     新 cwd 的项目目录（每个 projects 根都做），硬链接失败就复制。已有的不覆盖。
+  3. 所有以旧工作区开头的字符串换成新路径（不分大小写、按分隔符断开），名字含 `realpath` 的字段
+     （`folderPlace.realPath`、`gitAnchorsFolderRealpath`）不改，因为链接解析后就是原目录。
+  4. 同一个数据目录内的复制（只是换账号文件夹）不处理：Desktop 本来就显示「此电脑」。
+- **项目目录名**：非 `[A-Za-z0-9]` 的 UTF-16 码元换成 `-`；超过 200 个字符时截到 200，再接
+  `-` + 对原路径做 32 位 `h = (h<<5) - h + c`、取 `Math.abs` 后的 36 进制。已用真实目录 `…-scratch-2026-1-j3hcd8` 验证，见单元测试。
+- **Desktop 6.28899 的删除行为**（`app.asar` 里 `.vite/build/index.chunk-cpsM356y.js`）：
+  - `removeScratchWorkspace`：`fs.rm(工作区, {recursive, force})`。实测 Node 22 对 junction 只删链接本身，不进原目录；
+  - 定期清理（`startScratchWorkspaceSweep`）先 `lstat`，不是目录（链接）就跳过；
+  - 删会话时移走对话记录前要求 `nlink === 1`，硬链接过的对话记录它不删（会话没了，文件留着）。
+- **风险**：在**原件所在的数据目录**里删这个会话，Desktop 会删掉真实工作区，其他目录里的链接就断了，
+  工作区里的文件没了（对话记录因为是硬链接，还在）。要彻底避免，得把工作区挪到 CC Switch 自己的目录、
+  每个数据目录都只放链接；目前没这样做，因为那要改动原件。
+- 转换以前原样复制的会话只在目录空闲（那个 Desktop 没开着）时进行，改之前备份。
+
 ### 4.4 不自动关闭/启动的原则
 
 - 切换卡片只写配置。Desktop 只在用户主动操作时启动：点按钮，或执行命令行参数。
@@ -202,16 +260,18 @@
 | 原来那张官方卡 `claude-desktop-official`、或还没选过卡 | 默认数据目录 | 是 |
 | 第三方 / 网关卡 | 默认数据目录 | 否 |
 
-- 打开前先补齐会话。
+- 打开前先补齐会话（目标已经开着时先叫到前面，再补齐别的目录）。
 - 有别的 Desktop 开着时不打开，弹出系统对话框，请用户先从托盘退出 Claude。
-- 目标目录的 Desktop 已经开着时，只把它叫到前面。
+- 目标目录的 Desktop 已经开着时，只把它叫到前面：窗口看得见就直接激活，缩在托盘里才再启动一次让它自己出来。
 - CC Switch 已经在运行：参数通过 single-instance 交给正在运行的实例处理，不开第二个窗口，也不显示主窗口。
 - CC Switch 没运行：冷启动后主窗口保持隐藏（和静默启动一样），只留托盘，然后执行打开。
 
+**推荐用 `cc-switch-open.exe`**（和 `cc-switch.exe` 放在同一个文件夹）。它不加载 Tauri，只发一条消息就退出，
+省掉 `cc-switch.exe` 第二个实例的启动时间（五十多 MB 的程序要初始化到单实例插件那一步才转发）。
+
 PowerToys 键盘管理器：重新映射快捷键 → 选一个快捷键 → 操作选「运行程序」：
-- 程序：解压后的 `cc-switch.exe` 完整路径；
-- 参数：`--open-claude-desktop`；
-- 「如果正在运行」一项选「启动另一个实例」。CC Switch 自己会把参数转给已运行的那个，不会真的开第二个。
+- 程序：`cc-switch-open.exe` 的完整路径；不需要参数（也可以继续用 `cc-switch.exe` 加 `--open-claude-desktop`，效果一样，慢一些）；
+- 「如果正在运行」一项选「启动另一个实例」。
 
 要换成别的账号，先在 CC Switch 里切到那张卡，再按快捷键。
 
@@ -223,13 +283,14 @@ PowerToys 键盘管理器：重新映射快捷键 → 选一个快捷键 → 操
 ```sh
 source .tool/env.sh
 cd src-tauri && cargo fmt && cargo clippy --lib --tests   # 应该 0 警告
-cargo test --lib claude_desktop                            # Desktop 相关 91 个测试
+cargo test --lib claude_desktop                            # Desktop 相关约 100 个测试
 cd .. && pnpm exec tsc --noEmit -p .
 pnpm exec vitest run tests/components/ClaudeDesktopSwitch.test.tsx tests/components/SwitchModePanel.test.tsx tests/config/localeParity.test.ts
 pnpm tauri build --no-bundle                              # 产物 src-tauri/target/release/cc-switch.exe
+cd src-tauri && cargo build --release --bin cc-switch-open # 产物 src-tauri/target/release/cc-switch-open.exe
 ```
 
-Portable 包：把 `cc-switch.exe` 和内容如下的 `portable.ini` 一起压成 zip，
+Portable 包：把 `cc-switch.exe`、`cc-switch-open.exe` 和内容如下的 `portable.ini` 一起压成 zip，
 输出到 `release-assets/CC-Switch-v<版本>-claude-desktop-accounts-windows-Windows-Portable.zip`。
 
 ```ini
@@ -247,5 +308,7 @@ portable=true
   - 这条路径在后端只在 CLI 那一步失败时写日志，直接查询失败不写日志。可以考虑补上日志。
 - 用户把 Desktop 账号卡绑在了和默认数据目录同一个号上。这种情况下账号卡会另开一个空目录，要重新登录，意义不大。
   可以考虑在界面上提示，或者直接用默认目录。
+- 「此电脑」会话：在原件所在的目录里删会话会删掉共用的工作区，见 4.5 的风险一条。
+- `cc-switch-open.exe` 和直接激活窗口没有在真实环境里试过（不能替用户启动 Desktop）；拿不到前台时会退回旧办法。
 - 没有在真实 Desktop 上做端到端测试（用户要求不要自动启动、关闭 Claude）。Windows 部分只用单元测试和只读探测验证过。
 - `--user-data-dir` 和 `--claude-first-party-sign-in` 都不是公开接口，Desktop 升级后要复查第 4.1 节。

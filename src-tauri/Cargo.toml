@@ -6,6 +6,8 @@ authors = ["Jason Young"]
 license = "MIT"
 repository = "https://github.com/farion1231/cc-switch"
 edition = "2021"
+# 有两个程序（见下面的 [[bin]]）：cargo run / tauri dev 默认跑主程序
+default-run = "cc-switch"
 rust-version = "1.85.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -21,6 +23,12 @@ doctest = false
 name = "cc-switch"
 path = "src/main.rs"
 # main.rs 仅负责启动入口（0 个单元测试）；关闭 test 目标避免 cargo test / nextest 多编多链一个测试二进制。
+test = false
+
+# 快捷键用的小启动器（Windows）：把 --open-claude-desktop 直接转给开着的 CC Switch，见文件说明
+[[bin]]
+name = "cc-switch-open"
+path = "src/bin/cc-switch-open.rs"
 test = false
 
 [features]
@@ -114,6 +122,7 @@ windows = "0.61"
 windows-sys = { version = "0.61", features = [
     "Wdk_System_Threading",
     "Win32_Foundation",
+    "Win32_System_DataExchange",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_Globalization",
     "Win32_Security_Credentials",

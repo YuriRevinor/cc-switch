@@ -24,6 +24,7 @@
 | `7460123a` | Claude Desktop: scratch sessions copied across data dirs show as 此电脑 (junction + transcript hardlinks) | 本地 |
 | `942f9fd9` | feat(claude-desktop): cc-switch-open.exe hotkey launcher; activate a running Desktop directly | 本地 |
 | `77cb42c1` | feat(claude-desktop): sync session deletes and archives across accounts, with a restorable trash | 本地 |
+| `1189d35b` | perf(claude-desktop): sync sessions in the background; open Desktop without the 1-2 s session scan | 本地 |
 
 合计 42 个文件，约 +2600 / −150 行（`git diff --stat 99f4bae5..HEAD`）。
 

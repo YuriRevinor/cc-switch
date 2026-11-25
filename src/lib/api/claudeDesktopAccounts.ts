@@ -26,11 +26,11 @@ export const claudeDesktopAccountsApi = {
   },
 
   /**
-   * 打开卡片对应的 Desktop：`accountKey` 是账号卡绑的 Claude 账号，`null` 用默认数据目录。别的 Desktop
-   * 开着时要 `quitRunning`（用户确认过）才会先退出它们。返回是不是第一次用这个账号目录（要登录）。
+   * 打开账号卡对应的 Desktop：`accountKey` 是账号卡绑的 Claude 账号。别的 Desktop 开着时不打开、
+   * 报错（CC Switch 从不退出它）。返回是不是第一次用这个账号目录（要登录）。
    */
-  async open(accountKey: string | null, quitRunning = false): Promise<boolean> {
-    return await invoke("open_claude_desktop", { accountKey, quitRunning });
+  async open(accountKey: string): Promise<boolean> {
+    return await invoke("open_claude_desktop", { accountKey });
   },
 };
 

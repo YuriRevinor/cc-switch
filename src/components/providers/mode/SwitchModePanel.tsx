@@ -718,11 +718,6 @@ export function SwitchModePanel({
             useProviderId,
             providerName: nameOf(useProviderId ?? directId),
           });
-          // 回到直连落到的那家要换 Desktop 时（账号卡、或账号目录的 Desktop 开着），确认后换过去
-          const target = providers[useProviderId ?? directId ?? ""];
-          if (app === "claude-desktop" && target) {
-            desktopSwitch.afterSwitch(target);
-          }
         }}
         onSwitchDirect={(providerId) => {
           const provider = providers[providerId];

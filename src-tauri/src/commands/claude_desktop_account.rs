@@ -10,17 +10,12 @@ pub async fn get_claude_desktop_profiles() -> Result<DesktopProfilesStatus, Stri
         .map_err(|error| error.to_string())
 }
 
-/// 打开卡片对应的 Desktop，返回是不是第一次用这个账号目录。`account_key` 是账号卡绑的 Claude 账号，
-/// 不传是默认数据目录；`quit_running`：用户确认过要先退出正在运行的 Desktop。
+/// 用户点「打开 Claude Desktop」：打开账号卡对应的 Desktop，返回是不是第一次用这个账号目录。
+/// `account_key` 是账号卡绑的 Claude 账号。别的 Desktop 开着时报错，不替用户关闭它。
 #[tauri::command(rename_all = "camelCase")]
-pub async fn open_claude_desktop(
-    account_key: Option<String>,
-    quit_running: bool,
-) -> Result<bool, String> {
-    tokio::task::spawn_blocking(move || {
-        claude_desktop_account::open(account_key.as_deref(), quit_running)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-    .map_err(|error| error.to_string())
+pub async fn open_claude_desktop(account_key: String) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || claude_desktop_account::open(&account_key))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
 }

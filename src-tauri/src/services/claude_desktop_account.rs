@@ -5,10 +5,11 @@
 //!
 //! - 账号卡：绑了授权中心 Claude 账号（`claude_official`）的 Desktop 官方卡（随机 id）。原来那张固定
 //!   id 的官方卡（`claude-desktop-official`）不能绑号，代表默认数据目录里 Desktop 自己的登录；
-//! - 切换：账号卡和别的卡一样「切换」。切换照常写默认数据目录的配置（账号卡是官方卡，写回 1P），界面
-//!   随后用 [`open`] 把 Desktop 换成这张卡的：账号卡用 `<根>/<accountUuid>/`，别的卡用默认数据目录。
-//!   同一时间只开一个 Desktop：别的 Desktop 开着时，界面先确认，用户同意后才由这里结束它们。第一次
-//!   打开时在 Desktop 自己的登录页登录这个号，登录由 Desktop 加密保存在目录里，CC Switch 不读；
+//! - 切换：账号卡和别的卡一样「切换」，只写默认数据目录的配置（账号卡是官方卡，写回 1P），不退出、
+//!   也不启动 Desktop。用户在使用中的账号卡上点「打开 Claude Desktop」时才由 [`open`] 用
+//!   `<根>/<accountUuid>/` 启动它。CC Switch 从不结束 Desktop：别的 Desktop 开着时不打开，请用户自己
+//!   先退出。第一次打开时在 Desktop 自己的登录页登录这个号，登录由 Desktop 加密保存在目录里，CC Switch
+//!   不读；
 //! - 只看 `config.json` 的 `lastKnownAccountUuid` 判断目录里登的是谁。
 //!
 //! 目录放在 `~/Library/Application Support/com.ccswitch.desktop/claude-desktop-accounts/`（不放进可能
@@ -138,13 +139,13 @@ pub fn status() -> DesktopProfilesStatus {
     }
 }
 
-/// 打开卡片对应的 Desktop，返回是不是第一次用这个账号目录（要在 Desktop 里登录）。`account_key` 是
-/// 账号卡绑的号，用这个号的数据目录（默认数据目录登的正好是这个号、又没建过账号目录时用默认的）；
-/// `None` 是别的卡，用默认数据目录。
+/// 用户点「打开 Claude Desktop」：打开账号卡对应的 Desktop，返回是不是第一次用这个账号目录（要在
+/// Desktop 里登录）。`account_key` 是账号卡绑的号，用这个号的数据目录（默认数据目录登的正好是这个号、
+/// 又没建过账号目录时用默认的）。
 ///
-/// 要打开的已经开着就只叫到前面。别的 Desktop 开着时：`quit_running`（用户在界面上确认过）就先结束
-/// 它们，否则报错、什么都不动。打开前把没在运行的目录的会话列表补齐（见 `claude_desktop_sessions`）。
-pub fn open(account_key: Option<&str>, quit_running: bool) -> Result<bool, AppError> {
+/// 要打开的已经开着就只叫到前面。别的 Desktop 开着时报错、什么都不动：CC Switch 从不结束 Desktop。
+/// 打开前把没在运行的目录的会话列表补齐（见 `claude_desktop_sessions`）。
+pub fn open(account_key: &str) -> Result<bool, AppError> {
     if !supported() {
         return Err(AppError::localized(
             "claude_desktop.account.unsupported",
@@ -152,32 +153,33 @@ pub fn open(account_key: Option<&str>, quit_running: bool) -> Result<bool, AppEr
             "Only Claude Desktop on macOS (installed in Applications) or the Microsoft Store / MSIX install on Windows is supported for now",
         ));
     }
-    let profile_dir = match account_key {
-        Some(key) => {
-            let uuid = account_uuid_of(key)?;
-            let dir = accounts_root().join(uuid);
-            let use_default = !dir.is_dir()
-                && default_dir()
-                    .and_then(|dir| signed_in_account(&dir))
-                    .as_deref()
-                    == Some(uuid);
-            (!use_default).then_some(dir)
-        }
-        None => None,
+    let profile_dir = {
+        let uuid = account_uuid_of(account_key)?;
+        let dir = accounts_root().join(uuid);
+        let use_default = !dir.is_dir()
+            && default_dir()
+                .and_then(|dir| signed_in_account(&dir))
+                .as_deref()
+                == Some(uuid);
+        (!use_default).then_some(dir)
     };
 
-    let mut instances = running_instances();
+    let instances = running_instances();
     let target_pid = instances.pid_of(profile_dir.as_deref());
     if instances.any() && target_pid.is_none() {
-        if !quit_running {
-            return Err(AppError::localized(
+        return Err(if cfg!(windows) {
+            AppError::localized(
                 "claude_desktop.account.others_running",
-                "还有 Claude Desktop 开着，确认退出它后再打开",
-                "Another Claude Desktop is running; confirm quitting it, then open again",
-            ));
-        }
-        quit(&instances)?;
-        instances = DesktopInstances::default();
+                "还有别的 Claude Desktop 开着，CC Switch 不会替你关闭它。请先在托盘图标上退出 Claude，再点「打开 Claude Desktop」",
+                "Another Claude Desktop is running, and CC Switch won't close it for you. Quit Claude from its tray icon, then click Open Claude Desktop again",
+            )
+        } else {
+            AppError::localized(
+                "claude_desktop.account.others_running",
+                "还有别的 Claude Desktop 开着，CC Switch 不会替你关闭它。请先退出它（⌘Q），再点「打开 Claude Desktop」",
+                "Another Claude Desktop is running, and CC Switch won't close it for you. Quit it (⌘Q), then click Open Claude Desktop again",
+            )
+        });
     }
     let first_login = profile_dir
         .as_deref()
@@ -402,46 +404,6 @@ fn instances_from_ps(text: &str) -> DesktopInstances {
     )
 }
 
-/// 结束正在运行的 Desktop 主进程，等它们都退出。macOS 发 SIGTERM（和 ⌘Q 一样走正常退出）；Windows
-/// 上关窗口只会缩到托盘，只能结束进程树（和任务管理器里「结束任务」一样）。
-fn quit(instances: &DesktopInstances) -> Result<(), AppError> {
-    #[cfg(unix)]
-    for (pid, _) in &instances.0 {
-        if let Ok(pid) = i32::try_from(*pid) {
-            // SAFETY: 只是给这个进程发信号；进程号来自刚读的进程表
-            unsafe {
-                libc::kill(pid, libc::SIGTERM);
-            }
-        }
-    }
-    #[cfg(windows)]
-    for (pid, _) in &instances.0 {
-        win::kill_tree(*pid);
-    }
-    #[cfg(not(any(unix, windows)))]
-    let _ = instances;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    while std::time::Instant::now() < deadline {
-        if !running_instances().any() {
-            log::info!("[DesktopAccount] 已按用户确认退出正在运行的 Claude Desktop");
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(250));
-    }
-    if cfg!(windows) {
-        return Err(AppError::localized(
-            "claude_desktop.account.quit_timeout",
-            "Claude Desktop 没能退出，请在托盘图标上退出 Claude（或在任务管理器里结束它）后再打开",
-            "Claude Desktop didn't quit. Quit Claude from its tray icon (or end it in Task Manager), then open again",
-        ));
-    }
-    Err(AppError::localized(
-        "claude_desktop.account.quit_timeout",
-        "Claude Desktop 没能退出，请手动退出（⌘Q）后再打开",
-        "Claude Desktop didn't quit. Quit it yourself (⌘Q), then open again",
-    ))
-}
-
 fn not_installed() -> AppError {
     AppError::localized(
         "claude_desktop.account.not_installed",
@@ -450,8 +412,8 @@ fn not_installed() -> AppError {
     )
 }
 
-/// 启动 Desktop，`profile_dir` 是账号目录（`None` 用默认数据目录）。这个目录已经在跑时不能走这里，
-/// 见 [`bring_to_front`]。
+/// 启动账号卡的 Desktop，`profile_dir` 是账号目录（`None` 用默认数据目录）。这个目录已经在跑时不能
+/// 走这里，见 [`bring_to_front`]。
 fn launch(profile_dir: Option<&Path>) -> Result<(), AppError> {
     #[cfg(windows)]
     {
@@ -548,18 +510,16 @@ fn bring_to_front(pid: u32, profile_dir: Option<&Path>) {
 mod win {
     use std::ffi::OsString;
     use std::fs;
-    use std::os::windows::process::CommandExt;
     use std::path::{Path, PathBuf};
 
     use super::{not_installed, windows_desktop_main, DesktopInstances};
     use crate::error::AppError;
 
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     /// MSIX 包注册的执行别名
     const LAUNCHER_ALIAS: &str = "claude-desktop.exe";
-    /// 新数据目录还没登录时，Desktop 看到全局的 3P 配置会丢掉 1P 选择、用 3P 重启（userData 也跟着
-    /// 换成 `Claude-3p`）。带上这个参数它保留 1P，停在这个号的登录页。只在启动时认，重启时 Desktop
-    /// 自己去掉。
+    /// 数据目录还没登录（新建的账号目录、或在默认数据目录里退出了登录）时，Desktop 启动会丢掉全局的 1P
+    /// 选择（把 `Claude-3p` 里的 `deploymentMode` 清掉），登录页变成可以选网关（3P）的那种。带上这个
+    /// 参数它保留 1P，停在 Claude 账号的登录页。只在启动时认，重启时 Desktop 自己去掉。
     const FIRST_PARTY_SIGN_IN: &str = "--claude-first-party-sign-in";
 
     fn local_app_data() -> Option<PathBuf> {
@@ -602,7 +562,7 @@ mod win {
             .map(|(_, dir)| dir)
     }
 
-    /// 启动 Desktop。`first_party` 只对账号目录有用（见 [`FIRST_PARTY_SIGN_IN`]）；叫到前面那次不带。
+    /// 启动 Desktop。`first_party` 带上 [`FIRST_PARTY_SIGN_IN`]（账号卡都是官方的）；叫到前面那次不带。
     pub(super) fn launch(profile_dir: Option<&Path>, first_party: bool) -> Result<(), AppError> {
         let launcher = launcher().ok_or_else(not_installed)?;
         let mut command = std::process::Command::new(&launcher);
@@ -610,9 +570,9 @@ mod win {
             let mut flag = OsString::from("--user-data-dir=");
             flag.push(dir.as_os_str());
             command.arg(flag);
-            if first_party {
-                command.arg(FIRST_PARTY_SIGN_IN);
-            }
+        }
+        if first_party {
+            command.arg(FIRST_PARTY_SIGN_IN);
         }
         command
             .stdin(std::process::Stdio::null())
@@ -621,20 +581,6 @@ mod win {
             .spawn()
             .map(drop)
             .map_err(|e| AppError::Message(format!("打开 Claude Desktop 失败: {e}")))
-    }
-
-    /// 结束这个进程和它的子进程。失败了不报错，调用方会看它还在不在。
-    pub(super) fn kill_tree(pid: u32) {
-        let result = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
-        if let Err(error) = result {
-            log::warn!("[DesktopAccount] 结束 Claude Desktop（{pid}）失败: {error}");
-        }
     }
 
     pub(super) fn running_instances() -> DesktopInstances {

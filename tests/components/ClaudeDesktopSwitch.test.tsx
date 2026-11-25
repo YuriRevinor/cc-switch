@@ -52,6 +52,9 @@ function Harness() {
       >
         switch
       </button>
+      <button type="button" onClick={() => desktop.open(card)}>
+        open
+      </button>
       {desktop.dialog}
     </>
   );
@@ -64,43 +67,45 @@ describe("useClaudeDesktopSwitch", () => {
     mocks.open.mockResolvedValue(false);
   });
 
-  it("switches to an account card, then opens that account's Desktop", async () => {
-    mocks.getProfiles.mockResolvedValue(profiles(false));
-    renderWithQueryClient(<Harness />);
-    await userEvent.click(screen.getByRole("button", { name: "switch" }));
-
-    await waitFor(() =>
-      expect(mocks.open).toHaveBeenCalledWith(`${ACCOUNT}:org`, false),
-    );
-    expect(mocks.doSwitch).toHaveBeenCalledWith(true);
-  });
-
-  it("quits another running Desktop only after the user confirms", async () => {
+  it("switching only switches: it never opens or quits Desktop", async () => {
     mocks.getProfiles.mockResolvedValue(profiles(true));
     renderWithQueryClient(<Harness />);
-
     await userEvent.click(screen.getByRole("button", { name: "switch" }));
+
+    await waitFor(() => expect(mocks.doSwitch).toHaveBeenCalledWith(false));
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "退出并打开" })).toBeNull();
+  });
+
+  it("opens the account's Desktop only when the user asks", async () => {
+    mocks.getProfiles.mockResolvedValue(profiles(false));
+    renderWithQueryClient(<Harness />);
+    await userEvent.click(await screen.findByRole("button", { name: "open" }));
+
+    await waitFor(() =>
+      expect(mocks.open).toHaveBeenCalledWith(`${ACCOUNT}:org`),
+    );
+    expect(mocks.doSwitch).not.toHaveBeenCalled();
+  });
+
+  it("asks before opening an account that still has to sign in", async () => {
+    mocks.getProfiles.mockResolvedValue({
+      ...profiles(false),
+      profiles: [{ accountUuid: ACCOUNT, signedInAs: null, running: false }],
+    });
+    renderWithQueryClient(<Harness />);
+    await userEvent.click(await screen.findByRole("button", { name: "open" }));
     await userEvent.click(
       await screen.findByRole("button", { name: "common.cancel" }),
     );
-    expect(mocks.doSwitch).not.toHaveBeenCalled();
+    expect(mocks.open).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: "switch" }));
+    await userEvent.click(screen.getByRole("button", { name: "open" }));
     await userEvent.click(
-      await screen.findByRole("button", { name: "退出并打开" }),
+      await screen.findByRole("button", { name: "打开并登录" }),
     );
     await waitFor(() =>
-      expect(mocks.open).toHaveBeenCalledWith(`${ACCOUNT}:org`, true),
+      expect(mocks.open).toHaveBeenCalledWith(`${ACCOUNT}:org`),
     );
-  });
-
-  it("leaves Desktop alone when the switch itself fails", async () => {
-    mocks.getProfiles.mockResolvedValue(profiles(false));
-    mocks.doSwitch.mockResolvedValue(false);
-    renderWithQueryClient(<Harness />);
-    await userEvent.click(screen.getByRole("button", { name: "switch" }));
-
-    await waitFor(() => expect(mocks.doSwitch).toHaveBeenCalled());
-    expect(mocks.open).not.toHaveBeenCalled();
   });
 });

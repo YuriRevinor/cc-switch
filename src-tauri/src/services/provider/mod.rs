@@ -7541,16 +7541,16 @@ impl ProviderService {
             return Err(Self::codebuddy_official_not_a_model());
         }
 
-        // 绑了 Claude 账号的 Desktop 官方卡要用这个号的数据目录打开 Desktop，目前只有 macOS 上做得到
-        // （见 claude_desktop_account）
+        // 绑了 Claude 账号的 Desktop 官方卡要用这个号的数据目录打开 Desktop，目前只有 macOS 和 Windows
+        // 的 MSIX 安装版做得到（见 claude_desktop_account）
         if app_type == AppType::ClaudeDesktop
             && crate::services::claude_desktop_account::is_account_card(_provider)
             && !crate::services::claude_desktop_account::supported()
         {
             return Err(AppError::localized(
                 "claude_desktop.switch.account_unsupported",
-                "绑了 Claude 账号的 Claude Desktop 卡目前只支持 macOS 上的 Claude Desktop（装在「应用程序」文件夹里）",
-                "Claude Desktop cards bound to a Claude account only work with Claude Desktop on macOS (installed in Applications) for now",
+                "绑了 Claude 账号的 Claude Desktop 卡目前只支持 macOS 上的 Claude Desktop（装在「应用程序」文件夹里）和 Windows 上 Microsoft Store / MSIX 安装的 Claude Desktop",
+                "Claude Desktop cards bound to a Claude account only work with Claude Desktop on macOS (installed in Applications) or the Microsoft Store / MSIX install on Windows for now",
             ));
         }
 

@@ -1,4 +1,4 @@
-//! Claude Desktop 用授权中心里的 Claude 账号：每个账号一个独立的 Desktop 数据目录（macOS）。
+//! Claude Desktop 用授权中心里的 Claude 账号：每个账号一个独立的 Desktop 数据目录（macOS、Windows）。
 //!
 //! Desktop 是 Electron 应用，启动时认 `--user-data-dir`：换一个数据目录，登录、设置和会话列表就都是
 //! 另一份。`--user-data-dir` 不是 Anthropic 公开支持的用法，以后的版本可能不再认它。
@@ -13,7 +13,16 @@
 //!
 //! 目录放在 `~/Library/Application Support/com.ccswitch.desktop/claude-desktop-accounts/`（不放进可能
 //! 被网盘同步的 `~/.cc-switch`）。从授权中心删掉账号不删目录，再加回来还能接着用。
+//!
+//! Windows（只认 MSIX 安装版，见 [`win`]）和 macOS 有几处不同：
+//! - 目录在 `%USERPROFILE%\.cc-switch-claude-desktop-accounts\`：Desktop 的 MSIX 包开着文件系统写虚拟化，
+//!   AppData 下除了它自己的几个目录都会被重定向进包的私有目录，CC Switch 读不到；
+//! - 3P 配置（`%LOCALAPPDATA%\Claude-3p`）是全局一份，不跟着数据目录走。新目录还没登录时 Desktop 会
+//!   丢掉 1P 选择、改用 3P 重启，所以打开账号目录时带 `--claude-first-party-sign-in` 保住 1P；
+//! - 关窗口只是缩到托盘，退出只能结束进程树；已经开着的目录再启动一次，Desktop 的单实例锁会把它
+//!   叫到前面。
 
+#[cfg(not(windows))]
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -40,7 +49,7 @@ pub struct DesktopProfile {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopProfilesStatus {
-    /// macOS 上装了 Claude Desktop
+    /// 装了能按账号目录打开的 Claude Desktop（macOS 的 Claude.app、Windows 的 MSIX 版）
     pub supported: bool,
     /// 默认数据目录登的号在授权中心里的 key（原来那张官方卡按它显示账号和额度）
     pub default_account_key: Option<String>,
@@ -48,9 +57,20 @@ pub struct DesktopProfilesStatus {
     pub profiles: Vec<DesktopProfile>,
 }
 
-/// macOS 上装了 Claude Desktop。
+/// 装了能按账号目录打开的 Claude Desktop：macOS 的 Claude.app，或 Windows 的 MSIX 版。
 pub fn supported() -> bool {
-    cfg!(target_os = "macos") && crate::claude_desktop_config::macos_app_bundle().is_some()
+    #[cfg(target_os = "macos")]
+    {
+        crate::claude_desktop_config::macos_app_bundle().is_some()
+    }
+    #[cfg(windows)]
+    {
+        win::launcher().is_some()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        false
+    }
 }
 
 /// 账号卡：绑了 Claude 账号的 Desktop 官方卡（不含原来那张固定 id 的）。
@@ -128,8 +148,8 @@ pub fn open(account_key: Option<&str>, quit_running: bool) -> Result<bool, AppEr
     if !supported() {
         return Err(AppError::localized(
             "claude_desktop.account.unsupported",
-            "目前只支持 macOS 上的 Claude Desktop（装在「应用程序」文件夹里）",
-            "Only Claude Desktop on macOS is supported for now (installed in Applications)",
+            "目前只支持 macOS 上的 Claude Desktop（装在「应用程序」文件夹里）和 Windows 上 Microsoft Store / MSIX 安装的 Claude Desktop",
+            "Only Claude Desktop on macOS (installed in Applications) or the Microsoft Store / MSIX install on Windows is supported for now",
         ));
     }
     let profile_dir = match account_key {
@@ -186,7 +206,7 @@ pub fn open(account_key: Option<&str>, quit_running: bool) -> Result<bool, AppEr
 
     // 已经开着就只叫到前面：Desktop 不拦同一个数据目录再开一个
     match target_pid {
-        Some(pid) => bring_to_front(pid),
+        Some(pid) => bring_to_front(pid, profile_dir.as_deref()),
         None => launch(profile_dir.as_deref())?,
     }
     log::info!(
@@ -202,16 +222,28 @@ pub fn open(account_key: Option<&str>, quit_running: bool) -> Result<bool, AppEr
 
 /// 所有账号目录的根。
 fn accounts_root() -> PathBuf {
-    crate::config::get_home_dir()
-        .join("Library")
+    let home = crate::config::get_home_dir();
+    if cfg!(windows) {
+        // 不能放在 AppData 下：MSIX 版 Desktop 往那里写会被重定向进包的私有目录（见模块说明）
+        return home.join(".cc-switch-claude-desktop-accounts");
+    }
+    home.join("Library")
         .join("Application Support")
         .join("com.ccswitch.desktop")
         .join("claude-desktop-accounts")
 }
 
-/// Desktop 原来的数据目录。
+/// Desktop 原来的数据目录（Electron 的 userData，`config.json` 和会话列表在这里）。Windows 上它和
+/// `claude_desktop_config.json` 所在的 `%LOCALAPPDATA%\Claude` 不是同一个目录。
 fn default_dir() -> Option<PathBuf> {
-    crate::claude_desktop_config::desktop_data_dir()
+    #[cfg(windows)]
+    {
+        win::default_data_dir()
+    }
+    #[cfg(not(windows))]
+    {
+        crate::claude_desktop_config::desktop_data_dir()
+    }
 }
 
 /// 名字是 UUID 的账号目录（按名字排序）。
@@ -280,28 +312,74 @@ impl DesktopInstances {
             .iter()
             .find(|(_, running)| match (running, dir) {
                 (None, None) => true,
-                (Some(running), Some(dir)) => running.components().eq(dir.components()),
+                (Some(running), Some(dir)) => same_dir(running, dir),
                 _ => false,
             })
             .map(|(pid, _)| *pid)
     }
 }
 
-/// 读进程表里 `Claude.app` 的主进程和它的 `--user-data-dir`。读不出来时当作没在运行。
-fn running_instances() -> DesktopInstances {
-    if !cfg!(target_os = "macos") {
-        return DesktopInstances::default();
+/// 两个目录是不是同一个。Windows 的路径不分大小写，命令行里也可能多带一个结尾的 `\`。
+fn same_dir(a: &Path, b: &Path) -> bool {
+    if cfg!(windows) {
+        let norm = |path: &Path| {
+            path.to_string_lossy()
+                .replace('/', "\\")
+                .trim_end_matches('\\')
+                .to_lowercase()
+        };
+        return norm(a) == norm(b);
     }
-    std::process::Command::new("ps")
-        .args(["-axww", "-o", "pid=,args="])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map(|output| instances_from_ps(&String::from_utf8_lossy(&output.stdout)))
-        .unwrap_or_default()
+    a.components().eq(b.components())
+}
+
+/// 读进程表里 Desktop 的主进程和它的 `--user-data-dir`。读不出来时当作没在运行。
+fn running_instances() -> DesktopInstances {
+    #[cfg(windows)]
+    {
+        win::running_instances()
+    }
+    #[cfg(not(windows))]
+    {
+        if !cfg!(target_os = "macos") {
+            return DesktopInstances::default();
+        }
+        std::process::Command::new("ps")
+            .args(["-axww", "-o", "pid=,args="])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map(|output| instances_from_ps(&String::from_utf8_lossy(&output.stdout)))
+            .unwrap_or_default()
+    }
+}
+
+/// Windows 上一个 `claude.exe` 进程是不是 Desktop 的主进程，是的话它用的数据目录（`None` 是默认数据
+/// 目录）。只认 MSIX 包里的 `…\WindowsApps\Claude_…\app\Claude.exe`：同名的还有 Claude Code CLI
+/// （在 Desktop 数据目录的 `claude-code` 下）。带 `--type=` 的是 Electron 的子进程。`args` 不含程序名。
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_desktop_main(exe: &str, args: &[String]) -> Option<Option<PathBuf>> {
+    const FLAG: &str = "--user-data-dir=";
+    let exe = exe.replace('/', "\\").to_lowercase();
+    let package = exe.strip_suffix("\\app\\claude.exe")?;
+    let package = package.rsplit('\\').next()?;
+    if !package.starts_with("claude_") || !exe.contains("\\windowsapps\\") {
+        return None;
+    }
+    if args.iter().any(|arg| arg.starts_with("--type=")) {
+        return None;
+    }
+    let dir = args
+        .iter()
+        .find_map(|arg| arg.strip_prefix(FLAG))
+        .map(|dir| dir.trim().trim_matches('"'))
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from);
+    Some(dir)
 }
 
 /// `ps -o pid=,args=` 的输出。认 `…/Claude.app/Contents/MacOS/Claude`（复制出来的 `Claude 2.app` 也
 /// 算），不认 `Claude Helper (…)` 和命令行的 `claude`。路径里可能有空格，目录取到下一个 ` --` 为止。
+#[cfg_attr(windows, allow(dead_code))]
 fn instances_from_ps(text: &str) -> DesktopInstances {
     const EXE: &str = ".app/Contents/MacOS/Claude";
     const FLAG: &str = "--user-data-dir=";
@@ -324,7 +402,8 @@ fn instances_from_ps(text: &str) -> DesktopInstances {
     )
 }
 
-/// 结束正在运行的 Desktop 主进程（SIGTERM：和 ⌘Q 一样走正常退出），等它们都退出。
+/// 结束正在运行的 Desktop 主进程，等它们都退出。macOS 发 SIGTERM（和 ⌘Q 一样走正常退出）；Windows
+/// 上关窗口只会缩到托盘，只能结束进程树（和任务管理器里「结束任务」一样）。
 fn quit(instances: &DesktopInstances) -> Result<(), AppError> {
     #[cfg(unix)]
     for (pid, _) in &instances.0 {
@@ -335,7 +414,11 @@ fn quit(instances: &DesktopInstances) -> Result<(), AppError> {
             }
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    for (pid, _) in &instances.0 {
+        win::kill_tree(*pid);
+    }
+    #[cfg(not(any(unix, windows)))]
     let _ = instances;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while std::time::Instant::now() < deadline {
@@ -345,6 +428,13 @@ fn quit(instances: &DesktopInstances) -> Result<(), AppError> {
         }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
+    if cfg!(windows) {
+        return Err(AppError::localized(
+            "claude_desktop.account.quit_timeout",
+            "Claude Desktop 没能退出，请在托盘图标上退出 Claude（或在任务管理器里结束它）后再打开",
+            "Claude Desktop didn't quit. Quit Claude from its tray icon (or end it in Task Manager), then open again",
+        ));
+    }
     Err(AppError::localized(
         "claude_desktop.account.quit_timeout",
         "Claude Desktop 没能退出，请手动退出（⌘Q）后再打开",
@@ -352,16 +442,31 @@ fn quit(instances: &DesktopInstances) -> Result<(), AppError> {
     ))
 }
 
-/// 用 `open` 启动 Desktop。账号目录要 `-n`：另起一个进程才会带上 `--user-data-dir`（所以这个目录已经
-/// 在跑时不能走这里，见 [`bring_to_front`]）。
+fn not_installed() -> AppError {
+    AppError::localized(
+        "claude_desktop.account.not_installed",
+        "没有找到 Claude Desktop",
+        "Claude Desktop was not found",
+    )
+}
+
+/// 启动 Desktop，`profile_dir` 是账号目录（`None` 用默认数据目录）。这个目录已经在跑时不能走这里，
+/// 见 [`bring_to_front`]。
 fn launch(profile_dir: Option<&Path>) -> Result<(), AppError> {
-    let bundle = crate::claude_desktop_config::macos_app_bundle().ok_or_else(|| {
-        AppError::localized(
-            "claude_desktop.account.not_installed",
-            "没有找到 Claude Desktop",
-            "Claude Desktop was not found",
-        )
-    })?;
+    #[cfg(windows)]
+    {
+        win::launch(profile_dir, true)
+    }
+    #[cfg(not(windows))]
+    {
+        launch_macos(profile_dir)
+    }
+}
+
+/// 用 `open` 启动 Desktop。账号目录要 `-n`：另起一个进程才会带上 `--user-data-dir`。
+#[cfg(not(windows))]
+fn launch_macos(profile_dir: Option<&Path>) -> Result<(), AppError> {
+    let bundle = crate::claude_desktop_config::macos_app_bundle().ok_or_else(not_installed)?;
     let mut args: Vec<OsString> = Vec::new();
     if profile_dir.is_some() {
         args.push("-n".into());
@@ -386,11 +491,16 @@ fn launch(profile_dir: Option<&Path>) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 把开着的那个 Desktop 叫到前面。同一个 `Claude.app` 可能开着好几个（各自的数据目录），`open -a`
-/// 挑不了是哪个，所以按进程号找。叫不到前面也不要紧，Desktop 本来就开着。
-fn bring_to_front(pid: u32) {
+/// 把开着的那个 Desktop 叫到前面。叫不到前面也不要紧，Desktop 本来就开着。
+///
+/// - macOS：同一个 `Claude.app` 可能开着好几个（各自的数据目录），`open -a` 挑不了是哪个，所以按
+///   进程号找；
+/// - Windows：用同一个数据目录再启动一次。Desktop 按数据目录拿单实例锁，新进程把启动交给开着的那个
+///   （它把窗口叫出来，缩在托盘里也一样）就退出。
+fn bring_to_front(pid: u32, profile_dir: Option<&Path>) {
     #[cfg(target_os = "macos")]
     {
+        let _ = profile_dir;
         use objc2_06::msg_send;
         use objc2_06::rc::Retained;
         use objc2_06::runtime::{AnyClass, AnyObject};
@@ -415,8 +525,256 @@ fn bring_to_front(pid: u32) {
             }
         });
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = pid;
+    #[cfg(windows)]
+    {
+        let _ = pid;
+        if let Err(error) = win::launch(profile_dir, false) {
+            log::info!("[DesktopAccount] 没能把开着的 Claude Desktop 叫到前面: {error}");
+        }
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let _ = (pid, profile_dir);
+}
+
+/// Windows 上的 Claude Desktop：只认 MSIX 安装版（Microsoft Store 或官网的 MSIX 安装包）。
+///
+/// - 启动走包注册的执行别名 `%LOCALAPPDATA%\Microsoft\WindowsApps\claude-desktop.exe`，Desktop 带着包
+///   身份运行、收得到命令行参数。直接运行 `WindowsApps` 里的 exe 不带包身份；
+/// - 默认数据目录是 `%LOCALAPPDATA%\Claude-Data\claude_<包发布者哈希>`（Desktop 自己搬过去的，不在
+///   MSIX 的写虚拟化范围里）；
+/// - 进程表用 Toolhelp 快照读，命令行用 `NtQueryInformationProcess` 读（同一用户的进程只要
+///   `PROCESS_QUERY_LIMITED_INFORMATION`），再按 [`windows_desktop_main`] 认。
+#[cfg(windows)]
+mod win {
+    use std::ffi::OsString;
+    use std::fs;
+    use std::os::windows::process::CommandExt;
+    use std::path::{Path, PathBuf};
+
+    use super::{not_installed, windows_desktop_main, DesktopInstances};
+    use crate::error::AppError;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    /// MSIX 包注册的执行别名
+    const LAUNCHER_ALIAS: &str = "claude-desktop.exe";
+    /// 新数据目录还没登录时，Desktop 看到全局的 3P 配置会丢掉 1P 选择、用 3P 重启（userData 也跟着
+    /// 换成 `Claude-3p`）。带上这个参数它保留 1P，停在这个号的登录页。只在启动时认，重启时 Desktop
+    /// 自己去掉。
+    const FIRST_PARTY_SIGN_IN: &str = "--claude-first-party-sign-in";
+
+    fn local_app_data() -> Option<PathBuf> {
+        std::env::var_os("LOCALAPPDATA")
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from)
+    }
+
+    /// 执行别名在就算装了。它是一个 0 字节的重解析点，跟随它取元数据会失败，所以不跟随。
+    pub(super) fn launcher() -> Option<PathBuf> {
+        let alias = local_app_data()?
+            .join("Microsoft")
+            .join("WindowsApps")
+            .join(LAUNCHER_ALIAS);
+        fs::symlink_metadata(&alias).is_ok().then_some(alias)
+    }
+
+    /// 默认数据目录：`Claude-Data` 下有 `config.json` 的 `claude_*`，有几个时取最近写过的。
+    pub(super) fn default_data_dir() -> Option<PathBuf> {
+        let root = local_app_data()?.join("Claude-Data");
+        fs::read_dir(&root)
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .starts_with("claude_")
+            })
+            .filter_map(|entry| {
+                let modified = fs::metadata(entry.path().join("config.json"))
+                    .ok()?
+                    .modified()
+                    .ok()?;
+                Some((modified, entry.path()))
+            })
+            .max()
+            .map(|(_, dir)| dir)
+    }
+
+    /// 启动 Desktop。`first_party` 只对账号目录有用（见 [`FIRST_PARTY_SIGN_IN`]）；叫到前面那次不带。
+    pub(super) fn launch(profile_dir: Option<&Path>, first_party: bool) -> Result<(), AppError> {
+        let launcher = launcher().ok_or_else(not_installed)?;
+        let mut command = std::process::Command::new(&launcher);
+        if let Some(dir) = profile_dir {
+            let mut flag = OsString::from("--user-data-dir=");
+            flag.push(dir.as_os_str());
+            command.arg(flag);
+            if first_party {
+                command.arg(FIRST_PARTY_SIGN_IN);
+            }
+        }
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(drop)
+            .map_err(|e| AppError::Message(format!("打开 Claude Desktop 失败: {e}")))
+    }
+
+    /// 结束这个进程和它的子进程。失败了不报错，调用方会看它还在不在。
+    pub(super) fn kill_tree(pid: u32) {
+        let result = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        if let Err(error) = result {
+            log::warn!("[DesktopAccount] 结束 Claude Desktop（{pid}）失败: {error}");
+        }
+    }
+
+    pub(super) fn running_instances() -> DesktopInstances {
+        DesktopInstances(
+            claude_processes()
+                .into_iter()
+                .filter_map(|(pid, exe, args)| {
+                    windows_desktop_main(&exe, &args).map(|dir| (pid, dir))
+                })
+                .collect(),
+        )
+    }
+
+    /// 名字是 `claude.exe` 的进程：进程号、exe 路径、参数（不含程序名）。读不了的跳过。
+    fn claude_processes() -> Vec<(u32, String, Vec<String>)> {
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        };
+
+        let mut found = Vec::new();
+        // SAFETY: 快照句柄用完就关；PROCESSENTRY32W 按要求先填好 dwSize。
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snapshot == INVALID_HANDLE_VALUE {
+                return found;
+            }
+            let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+            let mut more = Process32FirstW(snapshot, &mut entry) != 0;
+            while more {
+                if wide_until_nul(&entry.szExeFile).eq_ignore_ascii_case("claude.exe") {
+                    if let Some((exe, args)) = process_details(entry.th32ProcessID) {
+                        found.push((entry.th32ProcessID, exe, args));
+                    }
+                }
+                more = Process32NextW(snapshot, &mut entry) != 0;
+            }
+            CloseHandle(snapshot);
+        }
+        found
+    }
+
+    fn wide_until_nul(text: &[u16]) -> String {
+        let end = text.iter().position(|&c| c == 0).unwrap_or(text.len());
+        String::from_utf16_lossy(&text[..end])
+    }
+
+    /// 一个进程的 exe 完整路径和命令行参数。
+    fn process_details(pid: u32) -> Option<(String, Vec<String>)> {
+        use windows_sys::Wdk::System::Threading::{
+            NtQueryInformationProcess, ProcessCommandLineInformation,
+        };
+        use windows_sys::Win32::Foundation::{CloseHandle, UNICODE_STRING};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        // SAFETY: 句柄只在这个函数里用，最后关掉；缓冲区长度都按 API 要求传。命令行信息是一个
+        // UNICODE_STRING 后面跟着它指向的字符，整块放在按 8 字节对齐的缓冲区里。
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() {
+                return None;
+            }
+            let details = (|| {
+                let mut path = vec![0u16; 32_768];
+                let mut len = path.len() as u32;
+                if QueryFullProcessImageNameW(
+                    handle,
+                    PROCESS_NAME_WIN32,
+                    path.as_mut_ptr(),
+                    &mut len,
+                ) == 0
+                {
+                    return None;
+                }
+                let exe = String::from_utf16_lossy(&path[..len as usize]);
+
+                let mut needed = 0u32;
+                NtQueryInformationProcess(
+                    handle,
+                    ProcessCommandLineInformation,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut needed,
+                );
+                if needed == 0 {
+                    return None;
+                }
+                let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
+                let status = NtQueryInformationProcess(
+                    handle,
+                    ProcessCommandLineInformation,
+                    buffer.as_mut_ptr().cast(),
+                    needed,
+                    &mut needed,
+                );
+                if status < 0 {
+                    return None;
+                }
+                let line = &*(buffer.as_ptr() as *const UNICODE_STRING);
+                if line.Buffer.is_null() || line.Length == 0 {
+                    return Some((exe, Vec::new()));
+                }
+                let chars = std::slice::from_raw_parts(line.Buffer, line.Length as usize / 2);
+                Some((exe, split_command_line(chars)))
+            })();
+            CloseHandle(handle);
+            details
+        }
+    }
+
+    /// 按 Windows 的规则拆命令行（引号、反斜杠），去掉程序名。
+    fn split_command_line(line: &[u16]) -> Vec<String> {
+        use windows_sys::Win32::Foundation::LocalFree;
+        use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
+
+        let mut text: Vec<u16> = line.to_vec();
+        text.push(0);
+        let mut count = 0i32;
+        // SAFETY: `text` 以 0 结尾；返回的数组用 LocalFree 释放，读的时候不越过 `count`。
+        unsafe {
+            let argv = CommandLineToArgvW(text.as_ptr(), &mut count);
+            if argv.is_null() {
+                return Vec::new();
+            }
+            let args = (1..count.max(0) as usize)
+                .map(|index| {
+                    let arg = *argv.add(index);
+                    let len = (0..).take_while(|&i| *arg.add(i) != 0).count();
+                    String::from_utf16_lossy(std::slice::from_raw_parts(arg, len))
+                })
+                .collect();
+            LocalFree(argv.cast());
+            args
+        }
+    }
 }
 
 #[cfg(test)]
@@ -445,6 +803,63 @@ mod tests {
         assert!(!is_account_card(&card));
         // 账号 key 会变成目录名
         assert!(account_uuid_of("../../Library:org").is_err());
+    }
+
+    #[test]
+    fn picks_the_windows_desktop_main_process_out_of_the_claude_exe_processes() {
+        let app =
+            r"C:\Program Files\WindowsApps\Claude_6.28899.6.0_x64__pzs8sxrjxfjjc\app\Claude.exe";
+        let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        // 默认数据目录：主进程不带参数
+        assert_eq!(windows_desktop_main(app, &[]), Some(None));
+        // 账号目录，路径里有空格（命令行拆开后引号已经去掉）
+        assert_eq!(
+            windows_desktop_main(
+                app,
+                &args(&[
+                    r"--user-data-dir=C:\Users\me\.cc-switch-claude-desktop-accounts\acc one",
+                    "--claude-first-party-sign-in",
+                ]),
+            ),
+            Some(Some(PathBuf::from(
+                r"C:\Users\me\.cc-switch-claude-desktop-accounts\acc one"
+            )))
+        );
+        // Electron 子进程
+        assert_eq!(
+            windows_desktop_main(app, &args(&["--type=renderer", r"--user-data-dir=C:\x"]),),
+            None
+        );
+        // 同名的 Claude Code CLI
+        assert_eq!(
+            windows_desktop_main(
+                r"C:\Users\me\AppData\Local\Claude-Data\claude_pzs8sxrjxfjjc\claude-code\2.1.330\abc\claude.exe",
+                &args(&["--output-format", "stream-json"]),
+            ),
+            None
+        );
+        assert_eq!(
+            windows_desktop_main(r"C:\Users\me\.local\bin\claude.exe", &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn compares_data_folders_the_way_the_platform_does() {
+        assert!(same_dir(
+            Path::new("/Users/me/acc"),
+            Path::new("/Users/me/acc")
+        ));
+        assert!(!same_dir(
+            Path::new("/Users/me/acc"),
+            Path::new("/Users/me/other")
+        ));
+        if cfg!(windows) {
+            assert!(same_dir(
+                Path::new(r"C:\Users\Me\Acc"),
+                Path::new(r"c:\users\me\acc\")
+            ));
+        }
     }
 
     #[test]

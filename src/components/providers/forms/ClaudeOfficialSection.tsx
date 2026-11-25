@@ -259,7 +259,7 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
               })
             : t("authCenter.group.claudeHelp", {
                 defaultValue:
-                  "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。macOS 上的 Claude Desktop 官方卡也能选这里的账号，切到那张卡时 Desktop 换成这个号单独的窗口，额度和 Claude Code 共用。",
+                  "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。macOS 和 Windows 上的 Claude Desktop 官方卡也能选这里的账号，切到那张卡时 Desktop 换成这个号单独的窗口，额度和 Claude Code 共用。",
               })
       }
       helpSide={helpSide}

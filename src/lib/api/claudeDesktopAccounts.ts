@@ -12,7 +12,7 @@ export interface DesktopProfile {
 }
 
 export interface DesktopProfilesStatus {
-  /** macOS 上装了 Claude Desktop：Desktop 官方卡才能绑 Claude 账号 */
+  /** 装了能按账号目录打开的 Claude Desktop（macOS，或 Windows 的 MSIX 安装版）：Desktop 官方卡才能绑 Claude 账号 */
   supported: boolean;
   /** 默认数据目录登的号在授权中心里的 key（原来那张官方卡按它显示账号和额度） */
   defaultAccountKey?: string | null;

@@ -11,7 +11,7 @@
 
 每张绑了账号的卡片还会显示这个号的套餐和剩余额度。
 
-> ⚠️ **切卡即切号、打开终端只作用于 Claude Code CLI 和 IDE 插件（VS Code、JetBrains 等），不支持 WSL 环境（后续会做）。** Claude Desktop 的聊天和 Code 标签页用的是它自己的登录，不读 Claude Code 的凭据，在 CC Switch 里切 Claude Code 的卡不会改变 Desktop 登录的账号。macOS 上的 Claude Desktop 另有一套用法：给每个账号一个独立的 Desktop 数据目录，切到账号卡时 Desktop 换成这个号，见下面的「5. Claude Desktop（macOS）」。
+> ⚠️ **切卡即切号、打开终端只作用于 Claude Code CLI 和 IDE 插件（VS Code、JetBrains 等），不支持 WSL 环境（后续会做）。** Claude Desktop 的聊天和 Code 标签页用的是它自己的登录，不读 Claude Code 的凭据，在 CC Switch 里切 Claude Code 的卡不会改变 Desktop 登录的账号。macOS 和 Windows 上的 Claude Desktop 另有一套用法：给每个账号一个独立的 Desktop 数据目录，切到账号卡时 Desktop 换成这个号，见下面的「5. Claude Desktop（macOS / Windows）」。
 
 ## 大家最关心的合规问题
 
@@ -113,7 +113,7 @@ Claude Code 里现在登着的号不用专门添加，第一次切换时会自�
 
 终端用哪个应用（系统终端、iTerm2、Ghostty 等），在「设置 → 通用 → 窗口与终端」里设置。
 
-### 5. Claude Desktop（macOS）
+### 5. Claude Desktop（macOS / Windows）
 
 Claude Desktop 也能用授权中心里的这些账号，每个账号用一个独立的 Desktop 数据目录：
 
@@ -131,7 +131,14 @@ Desktop 的 Code 标签页按账号分开列会话，换号后只显示当前账
 - 每个账号的 Desktop 数据目录在 `~/Library/Application Support/com.ccswitch.desktop/claude-desktop-accounts/` 下，里面的 Desktop 设置（MCP、扩展等）各自独立。从授权中心删掉账号不会删这个目录，再加回来还能接着用。
 - 额度是用这个账号在授权中心里的 Claude Code 登录查的；那份登录过期时，额度处会提示重新登录，不影响 Desktop 本身。
 - 直接从 Dock 打开的总是默认数据目录的 Desktop。账号卡在使用中、Desktop 被关掉以后，要再打开这个号，用卡片「⋯」里的「打开这个号的 Claude Desktop」。
-- 目前只支持 macOS。
+- 目前只支持 macOS，和 Windows 上 Microsoft Store / MSIX 安装的 Claude Desktop。
+
+Windows 上的几点不同：
+
+- 每个账号的 Desktop 数据目录在 `%USERPROFILE%\.cc-switch-claude-desktop-accounts\` 下。不放在 AppData 里，是因为 MSIX 版 Desktop 写进 AppData 的东西会被系统重定向到它自己的包目录，CC Switch 读不到。
+- 默认数据目录是 `%LOCALAPPDATA%\Claude-Data\claude_…`（从开始菜单打开的那个 Desktop）。
+- 关掉 Desktop 的窗口只会缩到托盘，所以切换时如果要先退出别的 Desktop，CC Switch 会直接结束它的进程（和任务管理器里「结束任务」一样）；同样会先弹框确认。
+- 账号目录第一次打开时，CC Switch 会让 Desktop 停在这个号的登录页（启动参数 `--claude-first-party-sign-in`）。不带它的话，本机有 3P 配置时 Desktop 会因为还没登录而改用 3P 模式打开。这同样不是 Anthropic 公开支持的用法。
 
 ## 常见问题
 
@@ -145,7 +152,7 @@ Desktop 的 Code 标签页按账号分开列会话，换号后只显示当前账
 不能。路由和聚合模式意味着请求需要在本地网关进行转发，这会给用户的账号带来封禁风险。CC Switch 不愿意把这部分风险交由用户承担。合规、稳定、原生配置优先，这是 CC Switch 的设计理念，即使这样会带来一系列的复杂度。
 
 **Claude Desktop 能这样切号吗？**
-macOS 上可以，但做法和 Claude Code 不同：Claude Desktop 用的是它自己的登录，CC Switch 不换它的登录，而是给每个账号一个独立的 Desktop 数据目录。给每个账号建一张账号卡，切过去 Desktop 就换成那个号的，见「5. Claude Desktop（macOS）」。其他平台要在 Claude Desktop 里退出再登录。
+macOS 和 Windows（MSIX 安装版）上可以，但做法和 Claude Code 不同：Claude Desktop 用的是它自己的登录，CC Switch 不换它的登录，而是给每个账号一个独立的 Desktop 数据目录。给每个账号建一张账号卡，切过去 Desktop 就换成那个号的，见「5. Claude Desktop（macOS / Windows）」。其他情况要在 Claude Desktop 里退出再登录。
 
 ## 参考
 

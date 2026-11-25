@@ -429,7 +429,7 @@ export function ClaudeDesktopProviderForm({
     initialData?.category === "official" ||
     activePreset?.category === "official";
   // 新加的官方卡可以绑授权中心的 Claude 账号，成为账号卡：切过去后用这个号单独的 Desktop 数据目录
-  // 打开 Desktop（只有 macOS）。原来那张固定 id 的官方卡代表 Desktop 自己的登录，不能绑；以前绑过的保存时去掉
+  // 打开 Desktop（macOS，或 Windows 的 MSIX 安装版）。原来那张固定 id 的官方卡代表 Desktop 自己的登录，不能绑；以前绑过的保存时去掉
   const isDefaultOfficial = providerId === CLAUDE_DESKTOP_OFFICIAL_ID;
   const { data: desktopProfiles } = useClaudeDesktopProfiles(isOfficial);
   const [claudeAccountId, setClaudeAccountId] = useState<string | null>(

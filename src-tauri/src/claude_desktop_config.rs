@@ -309,6 +309,7 @@ pub fn get_config_library_path() -> Result<PathBuf, AppError> {
 
 /// Claude Desktop 自己的数据目录（`claude_desktop_config.json` 所在的 `Claude`，不是 `Claude-3p`）。
 /// 平台不支持时为 `None`；目录不一定存在。
+#[cfg_attr(windows, allow(dead_code))]
 pub fn desktop_data_dir() -> Option<PathBuf> {
     current_platform_paths()
         .ok()?
@@ -1553,6 +1554,7 @@ fn detect_installed(paths: &ClaudeDesktopPaths, app_bundles: Option<&[PathBuf]>)
 }
 
 /// 本机的 `Claude.app`（只认 macOS 的两个标准位置）；没装时为 `None`。
+#[cfg_attr(windows, allow(dead_code))]
 pub fn macos_app_bundle() -> Option<PathBuf> {
     macos_app_bundle_candidates()
         .into_iter()

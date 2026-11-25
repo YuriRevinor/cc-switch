@@ -5,8 +5,16 @@
 //! 切到一个号、打开 Desktop 之前（见 `claude_desktop_account::open`），把每个账号文件夹缺的列表
 //! 文件从别处复制过去：只补缺，不覆盖、不删除，复制了哪些写进日志；正在运行的 Desktop 的目录不写
 //! （它会拿内存里的列表覆盖回去）。Desktop 的登录不读不写。
+//!
+//! 两种情况不补：
+//! - 对话记录（`~/.claude/projects/*/<cliSessionId>.jsonl`）已经不在了：补过去也打不开。
+//! - 这个文件夹里以前有、现在没了：是在这个号里删掉的（或被 Desktop 自己清理掉的），不再补回。
+//!   各文件夹出现过哪些会话记在 CC Switch 自己的 `~/.cc-switch/claude-desktop-sessions-seen.json`
+//!   里，不往 Desktop 的目录写别的文件。文件夹整个空了（新建或被清空）时不按这份记录挡。
+//!
+//! 这两条都只会少复制；任何目录里已有的文件都不删、不改。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -16,6 +24,7 @@ use crate::error::AppError;
 use crate::services::claude_desktop_account::{is_uuid, signed_in_account};
 
 const SESSIONS_DIRNAME: &str = "claude-code-sessions";
+const SEEN_FILENAME: &str = "claude-desktop-sessions-seen.json";
 
 /// `<数据目录>/claude-code-sessions/<accountUuid>/<orgUuid>/`
 struct Folder {
@@ -24,35 +33,110 @@ struct Folder {
     account: String,
     org: String,
     dir: PathBuf,
-    /// 文件名 → (路径, `lastActivityAt`)
-    sessions: BTreeMap<String, (PathBuf, i64)>,
+    /// 文件名 → 会话文件
+    sessions: BTreeMap<String, Session>,
+}
+
+/// 一个会话文件里用得到的几项。
+struct Session {
+    path: PathBuf,
+    /// `lastActivityAt`（毫秒），没有时为 0
+    last_activity: i64,
+    /// 本机对话记录的文件名（不带 `.jsonl`）。远程会话（SSH / WSL）、没有 `cliSessionId` 的为 `None`，
+    /// 不按对话记录挡。
+    transcript: Option<String>,
+}
+
+impl Session {
+    fn transcript_missing(&self, transcripts: Option<&HashSet<String>>) -> bool {
+        match (&self.transcript, transcripts) {
+            (Some(id), Some(ids)) => !ids.contains(id),
+            _ => false,
+        }
+    }
 }
 
 /// 把各数据目录里每个账号缺的会话补上，返回补了几个。`dirs` 是 (数据目录, 能不能写)。
 pub(crate) fn fill(dirs: &[(PathBuf, bool)]) -> Result<usize, AppError> {
+    let mut project_dirs = vec![crate::config::get_home_dir()
+        .join(".claude")
+        .join("projects")];
+    let configured = crate::config::get_claude_config_dir().join("projects");
+    if !project_dirs.contains(&configured) {
+        project_dirs.push(configured);
+    }
+    let seen_path = crate::config::get_app_config_dir().join(SEEN_FILENAME);
+    fill_with(dirs, &seen_path, transcript_ids(&project_dirs).as_ref())
+}
+
+/// `fill` 的本体。`transcripts` 为 `None`（分不清哪些对话记录还在）时不按对话记录挡。
+fn fill_with(
+    dirs: &[(PathBuf, bool)],
+    seen_path: &Path,
+    transcripts: Option<&HashSet<String>>,
+) -> Result<usize, AppError> {
     let mut folders = Vec::new();
     for (root, (dir, _)) in dirs.iter().enumerate() {
         folders.extend(scan(root, &dir.join(SESSIONS_DIRNAME))?);
     }
     add_signed_in_folders(dirs, &mut folders);
+    let mut seen = Seen::load(seen_path);
 
     // 同一个会话在几个文件夹里都有时，取最近活动的那一份
-    let mut newest: BTreeMap<&str, &(PathBuf, i64)> = BTreeMap::new();
+    let mut newest: BTreeMap<&str, &Session> = BTreeMap::new();
     for (name, file) in folders.iter().flat_map(|folder| &folder.sessions) {
         let best = newest.entry(name).or_insert(file);
-        if file.1 > best.1 {
+        if file.last_activity > best.last_activity {
             *best = file;
         }
     }
 
     let mut added = 0;
-    for folder in folders.iter().filter(|folder| dirs[folder.root].1) {
-        for (name, (source, _)) in &newest {
-            if !folder.sessions.contains_key(*name) && copy_if_absent(source, &folder.dir, name)? {
-                log::info!("[DesktopSessions] 补上 {}", folder.dir.join(name).display());
-                added += 1;
+    let mut updates = Vec::new();
+    for folder in &folders {
+        let key = folder.dir.to_string_lossy().into_owned();
+        // 文件夹空着（新建的、被清空的）就不按以前的记录挡，记录也从头来
+        let before = if folder.sessions.is_empty() {
+            BTreeSet::new()
+        } else {
+            seen.get(&key)
+        };
+        let mut now: BTreeSet<String> = folder.sessions.keys().cloned().collect();
+        if dirs[folder.root].1 {
+            for (name, source) in &newest {
+                if folder.sessions.contains_key(*name) {
+                    continue;
+                }
+                let target = folder.dir.join(name);
+                if before.contains(*name) {
+                    log::info!("[DesktopSessions] 不补 {}：这个号里删过", target.display());
+                    continue;
+                }
+                if source.transcript_missing(transcripts) {
+                    log::info!(
+                        "[DesktopSessions] 不补 {}：对话记录已经不在了",
+                        target.display()
+                    );
+                    continue;
+                }
+                if copy_if_absent(&source.path, &folder.dir, name)? {
+                    log::info!("[DesktopSessions] 补上 {}", target.display());
+                    added += 1;
+                }
+                now.insert((*name).to_string());
             }
         }
+        // 只记加、不记减：删掉的还留在记录里，下次才挡得住
+        now.extend(before);
+        updates.push((key, now));
+    }
+
+    for (key, names) in updates {
+        seen.set(key, names);
+    }
+    if let Err(error) = seen.save(seen_path) {
+        // 记不下只会让删过的会话下次又被补回来，不影响打开
+        log::warn!("[DesktopSessions] 没能记下各文件夹的会话: {error}");
     }
     Ok(added)
 }
@@ -75,8 +159,8 @@ fn scan(root: usize, sessions_dir: &Path) -> Result<Vec<Folder>, AppError> {
                 if !is_session {
                     continue;
                 }
-                if let Some(last_activity) = last_activity(&entry.path()) {
-                    sessions.insert(name, (entry.path(), last_activity));
+                if let Some(session) = read_session(entry.path()) {
+                    sessions.insert(name, session);
                 }
             }
             folders.push(Folder {
@@ -109,14 +193,54 @@ fn uuid_subdirs(dir: &Path) -> Result<Vec<(String, PathBuf)>, AppError> {
     Ok(found)
 }
 
-/// 会话文件的 `lastActivityAt`（毫秒），没有时为 0；不是 JSON 对象（读不了、坏了）时为 `None`。
-fn last_activity(path: &Path) -> Option<i64> {
-    let doc: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-    doc.is_object().then(|| {
-        doc.get("lastActivityAt")
+/// 读会话文件；不是 JSON 对象（读不了、坏了）时为 `None`。
+fn read_session(path: PathBuf) -> Option<Session> {
+    let doc: Value = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
+    let doc = doc.as_object()?;
+    let remote = ["sshConfig", "wslConfig"]
+        .iter()
+        .any(|key| doc.get(*key).is_some_and(|value| !value.is_null()));
+    let transcript = doc
+        .get("cliSessionId")
+        .and_then(Value::as_str)
+        .filter(|id| !remote && !id.is_empty())
+        .map(str::to_string);
+    Some(Session {
+        last_activity: doc
+            .get("lastActivityAt")
             .and_then(Value::as_i64)
-            .unwrap_or(0)
+            .unwrap_or(0),
+        transcript,
+        path,
     })
+}
+
+/// 各对话记录目录（`projects/<项目>/<id>.jsonl`）里有哪些 id。一个目录都没有、或有项目目录读不了
+/// 时为 `None`（分不清就不挡）。
+fn transcript_ids(project_dirs: &[PathBuf]) -> Option<HashSet<String>> {
+    let mut ids = HashSet::new();
+    let mut found = false;
+    for projects in project_dirs {
+        let entries = match fs::read_dir(projects) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return None,
+        };
+        found = true;
+        for project in entries {
+            let project = project.ok()?;
+            if !project.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            for file in fs::read_dir(project.path()).ok()? {
+                let name = file.ok()?.file_name().to_string_lossy().into_owned();
+                if let Some(id) = name.strip_suffix(".jsonl") {
+                    ids.insert(id.to_string());
+                }
+            }
+        }
+    }
+    found.then_some(ids)
 }
 
 /// 数据目录登的账号还没有会话文件夹（比如刚建的账号目录，Desktop 还没开过 Code 标签页），而别的
@@ -172,6 +296,57 @@ fn copy_if_absent(source: &Path, target_dir: &Path, name: &str) -> Result<bool, 
     Ok(true)
 }
 
+/// 各会话文件夹出现过的会话文件名：`{"version": 1, "folders": {"<文件夹路径>": ["local_<id>.json"]}}`。
+#[derive(Default)]
+struct Seen {
+    folders: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl Seen {
+    /// 没有或读不懂就从空的开始（只会让删过的会话再被补回来一次）。
+    fn load(path: &Path) -> Self {
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(_) => return Self::default(),
+        };
+        let folders = serde_json::from_slice::<Value>(&bytes)
+            .ok()
+            .and_then(|mut doc| doc.get_mut("folders").map(Value::take))
+            .and_then(|folders| serde_json::from_value(folders).ok());
+        match folders {
+            Some(folders) => Self { folders },
+            None => {
+                log::warn!("[DesktopSessions] {} 读不懂，从头记", path.display());
+                Self::default()
+            }
+        }
+    }
+
+    fn get(&self, folder: &str) -> BTreeSet<String> {
+        self.folders.get(folder).cloned().unwrap_or_default()
+    }
+
+    fn set(&mut self, folder: String, names: BTreeSet<String>) {
+        self.folders.insert(folder, names);
+    }
+
+    /// 先写临时文件再改名。
+    fn save(&self, path: &Path) -> Result<(), AppError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        }
+        let doc = serde_json::json!({ "version": 1, "folders": self.folders });
+        let bytes = serde_json::to_vec_pretty(&doc)
+            .map_err(|e| AppError::Message(format!("会话记录序列化失败: {e}")))?;
+        let temp = path.with_extension("json.tmp");
+        fs::write(&temp, bytes).map_err(|e| AppError::io(&temp, e))?;
+        fs::rename(&temp, path).map_err(|e| {
+            let _ = fs::remove_file(&temp);
+            AppError::io(path, e)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,6 +358,7 @@ mod tests {
     const ORG: &str = "11111111-0000-4000-8000-00000000000a";
     const S1: &str = "local_00000000-0000-4000-8000-000000000101.json";
     const S2: &str = "local_00000000-0000-4000-8000-000000000102.json";
+    const S3: &str = "local_00000000-0000-4000-8000-000000000103.json";
 
     fn folder(desktop: &Path, account: &str) -> PathBuf {
         let dir = desktop.join(SESSIONS_DIRNAME).join(account).join(ORG);
@@ -195,9 +371,18 @@ mod tests {
         fs::write(dir.join(name), doc.to_string()).unwrap();
     }
 
+    fn session_with_transcript(dir: &Path, name: &str, transcript: &str) {
+        let doc = json!({ "title": name, "lastActivityAt": 1, "cliSessionId": transcript });
+        fs::write(dir.join(name), doc.to_string()).unwrap();
+    }
+
     fn title_of(path: &Path) -> String {
         let doc: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         doc["title"].as_str().unwrap().to_string()
+    }
+
+    fn fill_in(temp: &TempDir, dirs: &[(PathBuf, bool)]) -> usize {
+        fill_with(dirs, &temp.path().join(SEEN_FILENAME), None).unwrap()
     }
 
     #[test]
@@ -209,7 +394,7 @@ mod tests {
         session(&a, S2, "two-old", 200);
         session(&b, S2, "two-new", 300);
 
-        assert_eq!(fill(&[(temp.path().to_path_buf(), true)]).unwrap(), 1);
+        assert_eq!(fill_in(&temp, &[(temp.path().to_path_buf(), true)]), 1);
         assert_eq!(title_of(&b.join(S1)), "one");
         assert_eq!(title_of(&a.join(S2)), "two-old");
     }
@@ -230,12 +415,14 @@ mod tests {
         )
         .unwrap();
 
-        fill(&[
-            (default_dir, true),
-            (profile_dir.clone(), true),
-            (running_dir.clone(), false),
-        ])
-        .unwrap();
+        fill_in(
+            &temp,
+            &[
+                (default_dir, true),
+                (profile_dir.clone(), true),
+                (running_dir.clone(), false),
+            ],
+        );
 
         let b_new = profile_dir.join(SESSIONS_DIRNAME).join(ACC_B).join(ORG);
         assert_eq!(title_of(&b_new.join(S1)), "one");
@@ -246,5 +433,98 @@ mod tests {
             .join(ORG)
             .join(S1)
             .exists());
+    }
+
+    #[test]
+    fn a_session_deleted_in_one_account_is_not_added_back_there() {
+        let temp = TempDir::new().unwrap();
+        let data = temp.path().join("data");
+        let a = folder(&data, ACC_A);
+        let b = folder(&data, ACC_B);
+        session(&a, S1, "one", 100);
+        session(&a, S2, "two", 200);
+        let dirs = [(data.clone(), true)];
+
+        assert_eq!(fill_in(&temp, &dirs), 2);
+        // 在 B 号里删掉 S1；A 号里的 S1 还在，也有一个 B 没见过的新会话 S3
+        fs::remove_file(b.join(S1)).unwrap();
+        session(&a, S3, "three", 300);
+
+        assert_eq!(fill_in(&temp, &dirs), 1);
+        assert!(!b.join(S1).exists());
+        assert_eq!(title_of(&b.join(S3)), "three");
+        // A 号里的一个不删、不改
+        assert_eq!(title_of(&a.join(S1)), "one");
+        assert_eq!(title_of(&a.join(S2)), "two");
+        // 再来一次也还是不补
+        assert_eq!(fill_in(&temp, &dirs), 0);
+        assert!(!b.join(S1).exists());
+    }
+
+    #[test]
+    fn an_emptied_folder_is_filled_again() {
+        let temp = TempDir::new().unwrap();
+        let data = temp.path().join("data");
+        let a = folder(&data, ACC_A);
+        let b = folder(&data, ACC_B);
+        session(&a, S1, "one", 100);
+        let dirs = [(data.clone(), true)];
+        fill_in(&temp, &dirs);
+        fs::remove_file(b.join(S1)).unwrap();
+
+        assert_eq!(fill_in(&temp, &dirs), 1);
+        assert!(b.join(S1).exists());
+    }
+
+    #[test]
+    fn a_session_whose_transcript_is_gone_is_not_copied() {
+        let temp = TempDir::new().unwrap();
+        let data = temp.path().join("data");
+        let a = folder(&data, ACC_A);
+        let b = folder(&data, ACC_B);
+        session_with_transcript(&a, S1, "kept");
+        session_with_transcript(&a, S2, "gone");
+        session(&a, S3, "never-started", 1);
+        let ids: HashSet<String> = ["kept".to_string()].into();
+
+        let added = fill_with(
+            &[(data.clone(), true)],
+            &temp.path().join(SEEN_FILENAME),
+            Some(&ids),
+        )
+        .unwrap();
+
+        assert_eq!(added, 2);
+        assert!(b.join(S1).exists());
+        assert!(!b.join(S2).exists());
+        assert!(b.join(S3).exists());
+        // 源文件不动
+        assert!(a.join(S2).exists());
+    }
+
+    #[test]
+    fn transcript_ids_reads_every_project_and_gives_up_when_unsure() {
+        let temp = TempDir::new().unwrap();
+        let projects = temp.path().join("projects");
+        fs::create_dir_all(projects.join("E--work")).unwrap();
+        fs::write(projects.join("E--work").join("abc.jsonl"), "").unwrap();
+        fs::write(projects.join("E--work").join("notes.txt"), "").unwrap();
+
+        let ids = transcript_ids(&[projects.clone(), temp.path().join("missing")]).unwrap();
+        assert_eq!(ids, ["abc".to_string()].into());
+        assert!(transcript_ids(&[temp.path().join("missing")]).is_none());
+    }
+
+    #[test]
+    fn an_unreadable_seen_file_starts_over() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join(SEEN_FILENAME);
+        fs::write(&path, "not json").unwrap();
+        assert!(Seen::load(&path).folders.is_empty());
+
+        let mut seen = Seen::default();
+        seen.set("x".into(), [S1.to_string()].into());
+        seen.save(&path).unwrap();
+        assert_eq!(Seen::load(&path).get("x"), [S1.to_string()].into());
     }
 }

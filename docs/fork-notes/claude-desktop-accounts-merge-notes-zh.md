@@ -52,6 +52,8 @@
 8. **快捷键启动器 `cc-switch-open.exe`**：比 `cc-switch.exe --open-claude-desktop` 快，见第 5 节。
 9. **多账号同步删除和归档**：在一个号里删除或归档会话，其他号跟着做；删掉的挪进 CC Switch 的回收站，
    Claude Desktop 页上可以恢复、清空，有开关（默认开），见 4.6。
+10. **后台同步、打开更快**：CC Switch 启动时、以及每次有 Desktop 退出后，在后台把会话补齐和同步做掉；
+   打开 Desktop 前只剩核对一遍（有缓存，文件没变时十几毫秒），见 3.9。
 
 ## 3. 文件清单（按提交）
 
@@ -201,6 +203,31 @@
   - 8 个语言文件加 `claudeDesktop.sessionSync.*`；
   - **新增** `tests/components/ClaudeDesktopSessionSync.test.tsx`。
 
+### 3.9 后台同步、会话扫描提速
+
+起因：每次打开前要把所有数据目录的会话文件（本机约 3200 份、每份约 37 KB，共 120 MB，大头是
+`promptAppendSnapshot`、`remoteMcpServersConfig`）整份读进来解析，日志里一次 1–2 秒，快捷键按下去要等这么久
+Desktop 才开始启动。
+
+- `services/claude_desktop_sessions.rs`：
+  - `Session::doc` 只是**摘要**：`SUMMARY_FIELDS` 里的 13 个字段（对话记录 id 们、`title`、`cwd`/`originCwd`、
+    `lastActivityAt`、`sshConfig`/`wslConfig`、三个归档字段）。用自定义 `Deserialize`（`Summary`）解析，其余字段只
+    检查语法（`IgnoredAny`）不建出来；
+  - 要改写文件的地方（就地搬「此电脑」、复制时搬「此电脑」、同步归档）用 `Session::full_doc()` 从磁盘读整份，
+    写完用 `summary_of()` 更新摘要。**以后新加读会话字段的逻辑，记得把字段加进 `SUMMARY_FIELDS`**；
+  - 进程内缓存 `CACHE`：路径 → (大小, 修改时间, 摘要)。大小和修改时间取自 `DirEntry::metadata`（Windows 上目录项
+    自带，不用打开文件），都对得上就不读。每次 `fill` 是新的一轮，这一轮没见到的文件从缓存去掉；
+  - 没命中的文件分最多 8 个线程读（不到 64 份时单线程）；
+  - `Places.cache`：测试里关掉（缓存是全局的，并行测试会互相清掉），只在 `a_changed_session_file_is_read_again` 里开。
+- `services/claude_desktop_account.rs`：
+  - `start_background_sync()`（`lib.rs` 的 setup 里调用）：后台线程，启动时同步一次（顺便把缓存热好），之后每
+    3 秒读一次进程表，有 Desktop 退出就再同步一次。只看进程表，不结束、不启动 Desktop；只写没开着的目录。
+    `supported()` 为假或没有账号目录时什么都不做；
+  - `open_dir` 打开前仍调一次（`sync_sessions`），作为核对；日志带耗时（`… 同步会话（N ms）`）；
+  - `open_from_command_line`：上一次还没打开完时，快捷键再按的那几下直接忽略（以前连按会启动两次）。
+- 实测（release，本机同规模的合成数据，系统文件缓存已热）：旧做法单是整份解析就 460 ms；新做法无缓存 90 ms，
+  有缓存 14 ms。真实环境里旧做法 1–2 秒，多出来的是冷读文件和杀毒扫描，新做法在后台吸收掉。
+
 ## 4. 关键设计和踩过的坑（换上游版本时最容易出问题的地方）
 
 ### 4.1 Claude Desktop（Windows MSIX 版，包名 `Claude_pzs8sxrjxfjjc`）的行为
@@ -254,6 +281,7 @@
   2. 这个文件夹以前出现过、现在没了，说明是在这个号里删的。依据 `claude-desktop-sessions-seen.json`，
      这份记录只加不减。文件夹整个空了的时候不按记录挡，记录也重新开始。
 - 记录文件读坏了，就从空的开始；写不进去，只记一条警告。最坏的结果只是删过的会话再被补回来一次。
+- 什么时候做：CC Switch 启动时、有 Desktop 退出后（后台），以及每次打开 Desktop 前（核对），见 3.9。
 
 ### 4.5 「此电脑」会话（`claude_desktop_scratch.rs`）
 
@@ -318,7 +346,8 @@
 | 原来那张官方卡 `claude-desktop-official`、或还没选过卡 | 默认数据目录 | 是 |
 | 第三方 / 网关卡 | 默认数据目录 | 否 |
 
-- 打开前先补齐会话（目标已经开着时先叫到前面，再补齐别的目录）。
+- 打开前先补齐会话（目标已经开着时先叫到前面，再补齐别的目录）。平常后台已经同步过，这一步只是核对，十几毫秒。
+- 上一次还没打开完时，再按的那几下不重复打开。
 - 有别的 Desktop 开着时不打开，弹出系统对话框，请用户先从托盘退出 Claude。
 - 目标目录的 Desktop 已经开着时，只把它叫到前面：窗口看得见就直接激活，缩在托盘里才再启动一次让它自己出来。
 - CC Switch 已经在运行：参数通过 single-instance 交给正在运行的实例处理，不开第二个窗口，也不显示主窗口。
@@ -341,7 +370,7 @@ PowerToys 键盘管理器：重新映射快捷键 → 选一个快捷键 → 操
 ```sh
 source .tool/env.sh
 cd src-tauri && cargo fmt && cargo clippy --lib --tests   # 应该 0 警告
-cargo test --lib claude_desktop                            # Desktop 相关约 106 个测试
+cargo test --lib claude_desktop                            # Desktop 相关约 108 个测试
 cd .. && pnpm exec tsc --noEmit -p .
 pnpm exec vitest run tests/components/ClaudeDesktopSwitch.test.tsx tests/components/ClaudeDesktopSessionSync.test.tsx tests/components/SwitchModePanel.test.tsx tests/config/localeParity.test.ts
 pnpm tauri build --no-bundle                              # 产物 src-tauri/target/release/cc-switch.exe
@@ -368,7 +397,11 @@ portable=true
   可以考虑在界面上提示，或者直接用默认目录。
 - 「此电脑」会话：在原件所在的目录里删会话会删掉共用的工作区，见 4.5 的风险一条（打开同步删除后，其他号里的副本
   也会被一起挪进回收站，不会留下打不开的链接，但工作区里的文件已经被 Desktop 删了）。
-- 同步删除/归档只在通过 CC Switch 打开 Desktop 时执行；同一时间开着的那个 Desktop 要关掉重开才看得到别处的变化。
+- 同步删除/归档在 CC Switch 启动时、Desktop 退出后和打开前执行；同一时间开着的那个 Desktop 要关掉重开才看得到别处的变化。
+- 后台同步是在发现 Desktop 退出后（最多晚 3 秒）开始的。用户正好在这一瞬间不经 CC Switch、自己启动 Desktop 时，
+  Desktop 可能读到同步了一半的列表；只会少显示几条，下次再同步，不会丢文件（删掉的都在回收站）。
+- 缩在托盘里的 Desktop 被叫出来时，仍要再启动一个 Desktop 进程把启动交给开着的那个，要多等一个 Electron 进程起来。
+  直接 `ShowWindow` 隐藏的窗口可能更快，但 Electron 不一定认，没做。
 - 归档以文件修改时间判断谁先变：Desktop 如果在没改归档的情况下重写了文件，不影响判断（只比较变了的那几份）。
 - `cc-switch-open.exe` 和直接激活窗口没有在真实环境里试过（不能替用户启动 Desktop）；拿不到前台时会退回旧办法。
 - 没有在真实 Desktop 上做端到端测试（用户要求不要自动启动、关闭 Claude）。Windows 部分只用单元测试和只读探测验证过。

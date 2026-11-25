@@ -24,12 +24,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::services::claude_desktop_scratch::{remove_link, WORKSPACES_DIRNAME};
-use crate::services::claude_desktop_sessions::{replace_file, Folder};
+use crate::services::claude_desktop_sessions::{replace_file, summary_of, Folder};
 use crate::services::claude_desktop_trash::{Kind, Trash};
 
 pub(crate) const MARKER_PREFIX: &str = "deleted_";
 const ARCHIVE_INDEX: &str = "archived-sessions.idx";
-const ARCHIVE_FIELDS: [&str; 3] = ["isArchived", "archiveSetAtMs", "autoArchiveExempt"];
+pub(crate) const ARCHIVE_FIELDS: [&str; 3] = ["isArchived", "archiveSetAtMs", "autoArchiveExempt"];
 
 /// CC Switch 记的同步状态（存在 `claude-desktop-sessions-seen.json` 的 `sync` 里）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -467,7 +467,10 @@ pub(crate) fn apply_archive(
             if archived(&session.doc) == intent.archived || session.last_activity > intent.at {
                 continue;
             }
-            let mut doc = session.doc.clone();
+            // 摘要里没有整份内容：改写要读整份
+            let Some(mut doc) = session.full_doc() else {
+                continue;
+            };
             if let Some(map) = doc.as_object_mut() {
                 for key in ARCHIVE_FIELDS {
                     match intent.fields.get(key) {
@@ -495,7 +498,7 @@ pub(crate) fn apply_archive(
                         },
                         session.path.display()
                     );
-                    session.doc = doc;
+                    session.doc = summary_of(&doc);
                     update_archive_index(&dir, name, intent.archived);
                     changed_count += 1;
                 }

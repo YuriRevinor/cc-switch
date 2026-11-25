@@ -61,6 +61,7 @@ pub(crate) struct Folder {
 }
 
 /// 一个会话文件里用得到的几项。
+#[derive(Clone)]
 pub(crate) struct Session {
     /// 会话 id（文件名 `local_<id>.json` 里的 `<id>`）
     pub(crate) id: String,
@@ -72,8 +73,28 @@ pub(crate) struct Session {
     /// 本机对话记录的文件名（不带 `.jsonl`）。远程会话（SSH / WSL）、没有 `cliSessionId` 的为 `None`，
     /// 不按对话记录挡。
     transcript: Option<String>,
+    /// 会话文件的摘要：只有 [`SUMMARY_FIELDS`] 这几项。要改写文件时用 [`Session::full_doc`] 读整份。
     pub(crate) doc: Value,
 }
+
+/// 补齐和同步要看的字段。会话文件一份三四十 KB，大头是 `promptAppendSnapshot`、
+/// `remoteMcpServersConfig` 这些用不到的；只留这几项，读得快、缓存也小。
+pub(crate) const SUMMARY_FIELDS: [&str; 13] = [
+    "cliSessionId",
+    "unarchivedCliSessionId",
+    "priorCliSessionIds",
+    "overflowCliSessionIds",
+    "title",
+    "originCwd",
+    "cwd",
+    "lastActivityAt",
+    "sshConfig",
+    "wslConfig",
+    // claude_desktop_sync::ARCHIVE_FIELDS
+    "isArchived",
+    "archiveSetAtMs",
+    "autoArchiveExempt",
+];
 
 impl Session {
     fn transcript_missing(&self, transcripts: Option<&HashSet<String>>) -> bool {
@@ -82,6 +103,80 @@ impl Session {
             _ => false,
         }
     }
+
+    /// 从磁盘读整份会话文件（改写、搬「此电脑」时用）。读不了、不是 JSON 对象时为 `None`。
+    pub(crate) fn full_doc(&self) -> Option<Value> {
+        let doc: Value = serde_json::from_slice(&fs::read(&self.path).ok()?).ok()?;
+        doc.is_object().then_some(doc)
+    }
+}
+
+/// 只取 [`SUMMARY_FIELDS`] 的 JSON 对象；别的字段照样检查语法，但不建出来。
+struct Summary(serde_json::Map<String, Value>);
+
+impl<'de> serde::Deserialize<'de> for Summary {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Fields;
+        impl<'de> serde::de::Visitor<'de> for Fields {
+            type Value = Summary;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a JSON object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Summary, A::Error> {
+                let mut fields = serde_json::Map::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    if SUMMARY_FIELDS.contains(&key.as_str()) {
+                        let value = map.next_value::<Value>()?;
+                        fields.insert(key, value);
+                    } else {
+                        map.next_value::<serde::de::IgnoredAny>()?;
+                    }
+                }
+                Ok(Summary(fields))
+            }
+        }
+        deserializer.deserialize_map(Fields)
+    }
+}
+
+/// 整份会话文件 → 摘要（改写之后更新 [`Session::doc`] 用）。
+pub(crate) fn summary_of(doc: &Value) -> Value {
+    let mut fields = serde_json::Map::new();
+    if let Some(map) = doc.as_object() {
+        for key in SUMMARY_FIELDS {
+            if let Some(value) = map.get(key) {
+                fields.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    Value::Object(fields)
+}
+
+/// 运行中的 CC Switch 记着读过的会话文件摘要，按路径认，大小和修改时间都没变就不再读。
+/// 每次补齐都是新的一轮，这一轮没见到的文件（删了、挪走了）从缓存里去掉。
+#[derive(Default)]
+struct SessionCache {
+    round: u64,
+    files: std::collections::HashMap<PathBuf, Cached>,
+}
+
+struct Cached {
+    len: u64,
+    modified: std::time::SystemTime,
+    round: u64,
+    session: Session,
+}
+
+static CACHE: std::sync::LazyLock<std::sync::Mutex<SessionCache>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn cache() -> std::sync::MutexGuard<'static, SessionCache> {
+    CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// 一次补齐做了什么。
@@ -117,6 +212,7 @@ fn default_places(with_transcripts: bool) -> Places {
             None
         },
         projects: project_dirs,
+        cache: true,
     }
 }
 
@@ -191,7 +287,8 @@ fn restore_with(
         if !idle {
             continue;
         }
-        for folder in scan(root, &dir.join(SESSIONS_DIRNAME))? {
+        let round = places.cache.then(|| cache().round);
+        for folder in scan(root, &dir.join(SESSIONS_DIRNAME), round)? {
             let _ = fs::remove_file(folder.dir.join(format!("{MARKER_PREFIX}{session_id}")));
         }
     }
@@ -212,6 +309,8 @@ struct Places {
     /// 还在的对话记录；`None`（分不清）时不按对话记录挡
     transcripts: Option<HashSet<String>>,
     projects: Vec<PathBuf>,
+    /// 用 [`CACHE`]（测试里关掉，各测试互不影响）
+    cache: bool,
 }
 
 /// `fill` 的本体。
@@ -219,9 +318,17 @@ fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<FillReport, Ap
     let seen_path = places.seen.as_path();
     let transcripts = places.transcripts.as_ref();
     let roots: Vec<PathBuf> = dirs.iter().map(|(dir, _)| dir.clone()).collect();
+    let round = places.cache.then(|| {
+        let mut cache = cache();
+        cache.round += 1;
+        cache.round
+    });
     let mut folders = Vec::new();
     for (root, (dir, _)) in dirs.iter().enumerate() {
-        folders.extend(scan(root, &dir.join(SESSIONS_DIRNAME))?);
+        folders.extend(scan(root, &dir.join(SESSIONS_DIRNAME), round)?);
+    }
+    if let Some(round) = round {
+        cache().files.retain(|_, cached| cached.round == round);
     }
     add_signed_in_folders(dirs, &mut folders);
     let mut seen = Seen::load(seen_path);
@@ -246,7 +353,10 @@ fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<FillReport, Ap
                 );
                 continue;
             }
-            let Some(moved) = relocate(&session.doc, &place, &places.projects) else {
+            let Some(full) = session.full_doc() else {
+                continue;
+            };
+            let Some(moved) = relocate(&full, &place, &places.projects) else {
                 continue;
             };
             match replace_file(&session.path, &to_bytes(&moved)?) {
@@ -255,7 +365,7 @@ fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<FillReport, Ap
                         "[DesktopSessions] {} 换到这个数据目录的「此电脑」",
                         session.path.display()
                     );
-                    session.doc = moved;
+                    session.doc = summary_of(&moved);
                 }
                 Err(error) => log::warn!("[DesktopSessions] {error}"),
             }
@@ -329,7 +439,7 @@ fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<FillReport, Ap
                     &folder.account,
                     &folder.org,
                 )
-                .and_then(|place| relocate(&source.doc, &place, &places.projects))
+                .and_then(|place| relocate(&source.full_doc()?, &place, &places.projects))
                 {
                     Some(moved) => to_bytes(&moved)?,
                     None => fs::read(&source.path).map_err(|e| AppError::io(&source.path, e))?,
@@ -360,12 +470,12 @@ fn fill_with(dirs: &[(PathBuf, bool)], places: &Places) -> Result<FillReport, Ap
 }
 
 /// 读出一个数据目录里的账号文件夹。名字不是 UUID 的目录、不是 `local_<uuid>.json` 的文件、坏掉的
-/// JSON 都跳过，不跟符号链接。
-fn scan(root: usize, sessions_dir: &Path) -> Result<Vec<Folder>, AppError> {
+/// JSON 都跳过，不跟符号链接。`round` 是这一轮补齐的编号：有时用 [`CACHE`]，没变的文件不再读。
+fn scan(root: usize, sessions_dir: &Path, round: Option<u64>) -> Result<Vec<Folder>, AppError> {
     let mut folders = Vec::new();
+    let mut files = Vec::new();
     for (account, account_dir) in uuid_subdirs(sessions_dir)? {
         for (org, dir) in uuid_subdirs(&account_dir)? {
-            let mut sessions = BTreeMap::new();
             let mut markers = BTreeMap::new();
             for entry in fs::read_dir(&dir).map_err(|e| AppError::io(&dir, e))? {
                 let entry = entry.map_err(|e| AppError::io(&dir, e))?;
@@ -386,24 +496,126 @@ fn scan(root: usize, sessions_dir: &Path) -> Result<Vec<Folder>, AppError> {
                     .strip_prefix("local_")
                     .and_then(|rest| rest.strip_suffix(".json"))
                     .filter(|id| is_uuid(id))
+                    .map(str::to_string)
                 else {
                     continue;
                 };
-                if let Some(session) = read_session(entry.path(), id) {
-                    sessions.insert(name, session);
-                }
+                // Windows 上目录项自带大小和修改时间，不用再打开文件
+                let stamp = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|meta| Some((meta.len(), meta.modified().ok()?)));
+                files.push(SessionFile {
+                    folder: folders.len(),
+                    name,
+                    id,
+                    path: entry.path(),
+                    stamp,
+                });
             }
             folders.push(Folder {
                 root,
                 account: account.clone(),
                 org,
                 dir,
-                sessions,
+                sessions: BTreeMap::new(),
                 markers,
             });
         }
     }
+    for (file, session) in read_sessions(&files, round) {
+        if let Some(session) = session {
+            folders[file.folder]
+                .sessions
+                .insert(file.name.clone(), session);
+        }
+    }
     Ok(folders)
+}
+
+/// 目录里列出来的一个会话文件。
+struct SessionFile {
+    /// `scan` 里 `folders` 的下标
+    folder: usize,
+    name: String,
+    id: String,
+    path: PathBuf,
+    /// 大小和修改时间；读不出时不进缓存
+    stamp: Option<(u64, std::time::SystemTime)>,
+}
+
+/// 读一批会话文件：缓存里大小和修改时间都对得上的直接用，其余的分几个线程读。
+fn read_sessions(
+    files: &[SessionFile],
+    round: Option<u64>,
+) -> Vec<(&SessionFile, Option<Session>)> {
+    let mut found: Vec<Option<Session>> = files.iter().map(|_| None).collect();
+    let mut misses: Vec<usize> = Vec::new();
+    match round {
+        Some(round) => {
+            let mut cache = cache();
+            for (index, file) in files.iter().enumerate() {
+                match (cache.files.get_mut(&file.path), file.stamp) {
+                    (Some(cached), Some((len, modified)))
+                        if cached.len == len && cached.modified == modified =>
+                    {
+                        cached.round = round;
+                        found[index] = Some(cached.session.clone());
+                    }
+                    _ => misses.push(index),
+                }
+            }
+        }
+        None => misses.extend(0..files.len()),
+    }
+
+    let read = |index: &usize| {
+        let file = &files[*index];
+        let modified = file.stamp.map_or(0, |(_, modified)| millis(modified));
+        read_session(file.path.clone(), &file.id, modified)
+    };
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(8);
+    let parsed: Vec<Option<Session>> = if threads < 2 || misses.len() < 64 {
+        misses.iter().map(read).collect()
+    } else {
+        let chunk = misses.len().div_ceil(threads);
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = misses
+                .chunks(chunk)
+                .map(|part| scope.spawn(move || part.iter().map(read).collect::<Vec<_>>()))
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap_or_default())
+                .collect()
+        })
+    };
+
+    let mut cache = round.map(|round| (round, cache()));
+    for (index, session) in misses.into_iter().zip(parsed) {
+        if let (Some((round, cache)), Some(session), Some((len, modified))) =
+            (cache.as_mut(), &session, files[index].stamp)
+        {
+            cache.files.insert(
+                files[index].path.clone(),
+                Cached {
+                    len,
+                    modified,
+                    round: *round,
+                    session: session.clone(),
+                },
+            );
+        }
+        found[index] = session;
+    }
+    files.iter().zip(found).collect()
+}
+
+fn millis(time: std::time::SystemTime) -> i64 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as i64)
 }
 
 /// 名字是 UUID 的子目录。目录不在时为空。
@@ -424,15 +636,9 @@ fn uuid_subdirs(dir: &Path) -> Result<Vec<(String, PathBuf)>, AppError> {
     Ok(found)
 }
 
-/// 读会话文件；不是 JSON 对象（读不了、坏了）时为 `None`。
-fn read_session(path: PathBuf, id: &str) -> Option<Session> {
-    let modified = fs::metadata(&path)
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |since| since.as_millis() as i64);
-    let doc: Value = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
-    let doc = doc.as_object()?;
+/// 读会话文件的摘要；不是 JSON 对象（读不了、坏了）时为 `None`。`modified` 是文件修改时间（毫秒）。
+fn read_session(path: PathBuf, id: &str, modified: i64) -> Option<Session> {
+    let Summary(doc) = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
     let remote = ["sshConfig", "wslConfig"]
         .iter()
         .any(|key| doc.get(*key).is_some_and(|value| !value.is_null()));
@@ -450,7 +656,7 @@ fn read_session(path: PathBuf, id: &str) -> Option<Session> {
             .unwrap_or(0),
         transcript,
         path,
-        doc: Value::Object(doc.clone()),
+        doc: Value::Object(doc),
     })
 }
 
@@ -689,11 +895,85 @@ mod tests {
             trash: temp.path().join(TRASH_DIRNAME),
             transcripts,
             projects: vec![temp.path().join("projects")],
+            // 缓存是全局的，并行的测试会互相清掉对方的；只在专门的测试里开
+            cache: false,
         }
     }
 
     fn fill_in(temp: &TempDir, dirs: &[(PathBuf, bool)]) -> usize {
         fill_with(dirs, &places(temp, None)).unwrap().added
+    }
+
+    #[test]
+    fn the_summary_keeps_what_sync_reads_and_drops_the_rest() {
+        use crate::services::claude_desktop_sync::ARCHIVE_FIELDS;
+        for key in ARCHIVE_FIELDS {
+            assert!(SUMMARY_FIELDS.contains(&key), "{key}");
+        }
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join(S1);
+        let doc = json!({
+            "title": "t", "lastActivityAt": 5, "cliSessionId": "c1", "isArchived": true,
+            "promptAppendSnapshot": { "a": [1, 2, 3] }, "remoteMcpServersConfig": "x"
+        });
+        fs::write(&path, doc.to_string()).unwrap();
+        let session = read_session(path.clone(), id_of(S1), 7).unwrap();
+        assert_eq!(
+            session.doc,
+            json!({ "title": "t", "lastActivityAt": 5, "cliSessionId": "c1", "isArchived": true })
+        );
+        assert_eq!(session.full_doc().unwrap(), doc);
+        assert_eq!(summary_of(&doc), session.doc);
+        // 坏掉的 JSON（哪怕坏在跳过的字段里）、不是对象的都不认
+        fs::write(&path, r#"{"title":"t","promptAppendSnapshot":[1,}"#).unwrap();
+        assert!(read_session(path.clone(), id_of(S1), 0).is_none());
+        fs::write(&path, "[1]").unwrap();
+        assert!(read_session(path, id_of(S1), 0).is_none());
+    }
+
+    #[test]
+    fn a_changed_session_file_is_read_again() {
+        let temp = TempDir::new().unwrap();
+        let data = temp.path().join("data");
+        let a = folder(&data, ACC_A);
+        // 够多的文件，走多线程那条路
+        let names: Vec<String> = (0..100)
+            .map(|i| format!("local_00000000-0000-4000-8000-{i:012}.json"))
+            .collect();
+        for name in &names {
+            session(&a, name, "old", 1);
+        }
+        let sessions_dir = data.join(SESSIONS_DIRNAME);
+        // 和补齐以外的读（恢复）一样，用当前这一轮
+        let round = cache().round;
+        let title = |round: u64, name: &str| {
+            let folders = scan(0, &sessions_dir, Some(round)).unwrap();
+            folders[0].sessions[name].doc["title"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(
+            scan(0, &sessions_dir, Some(round)).unwrap()[0]
+                .sessions
+                .len(),
+            100
+        );
+        assert!(cache().files.contains_key(&a.join(&names[7])));
+        assert_eq!(title(round, &names[7]), "old");
+        // 内容变了（大小、修改时间跟着变）就重新读
+        session(&a, &names[7], "a newer title", 2);
+        assert_eq!(title(round, &names[7]), "a newer title");
+
+        // 补齐时这一轮没见到的文件（删掉了）从缓存里去掉
+        fs::remove_file(a.join(&names[7])).unwrap();
+        let places = Places {
+            cache: true,
+            ..places(&temp, None)
+        };
+        fill_with(&[(data.clone(), true)], &places).unwrap();
+        assert!(!cache().files.contains_key(&a.join(&names[7])));
+        assert!(cache().files.contains_key(&a.join(&names[8])));
     }
 
     #[test]
@@ -839,7 +1119,7 @@ mod tests {
             fs::create_dir_all(&dir).unwrap();
             dir.to_string_lossy().into_owned()
         };
-        let doc = |cwd: String| json!({ "title": "s", "lastActivityAt": 1, "cwd": cwd, "originCwd": cwd });
+        let doc = |cwd: String| json!({ "title": "s", "lastActivityAt": 1, "cwd": cwd, "originCwd": cwd, "promptAppendSnapshot": { "text": "big" } });
         fs::write(a.join(S1), doc(ws("scratch-2026-11-12-000001")).to_string()).unwrap();
         // 以前原样复制过去的一份
         let old_copy = doc(ws("scratch-2026-11-12-000002")).to_string();
@@ -856,6 +1136,8 @@ mod tests {
         ] {
             let got: Value = serde_json::from_slice(&fs::read(p.join(name)).unwrap()).unwrap();
             assert_eq!(got["originCwd"], mine.join(leaf).to_string_lossy().as_ref());
+            // 摘要里没有的字段照样带过去
+            assert_eq!(got["promptAppendSnapshot"]["text"], "big");
             assert!(mine.join(leaf).is_dir());
         }
         // 默认目录里的原件不动；旧副本改之前备份了
@@ -1031,10 +1313,15 @@ mod tests {
         // 在 A 里归档
         let archived = json!({ "title": "s", "lastActivityAt": 1, "isArchived": true, "archiveSetAtMs": 20_000 });
         write_doc(&a, S1, &archived, 20_000);
+        let mut b_doc = live.clone();
+        b_doc["promptAppendSnapshot"] = json!("kept");
+        write_doc(&b, S1, &b_doc, 10_000);
         let report = fill_with(&dirs, &places(&temp, None)).unwrap();
         assert_eq!(report.sync.archived, 1);
         let got = doc_of(&b.join(S1));
         assert_eq!(got["isArchived"], true);
+        // 改写的是整份文件，不是摘要
+        assert_eq!(got["promptAppendSnapshot"], "kept");
         assert_eq!(got["archiveSetAtMs"], 20_000);
         let idx = doc_of(&b.join("archived-sessions.idx"));
         assert_eq!(idx["archived"], json!([format!("local_{}", id_of(S1))]));

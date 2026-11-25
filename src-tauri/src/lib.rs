@@ -1303,6 +1303,8 @@ pub fn run() {
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+            // Desktop 没开着时在后台把会话同步好，打开时不用等（不结束也不启动 Desktop）
+            services::claude_desktop_account::start_background_sync();
             if OPEN_CLAUDE_DESKTOP_AT_START.load(Ordering::Relaxed) {
                 log::info!(
                     "冷启动带 {}：打开 Claude Desktop",

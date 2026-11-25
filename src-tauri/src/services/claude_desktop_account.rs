@@ -243,17 +243,8 @@ fn open_dir(profile_dir: Option<PathBuf>, first_party: bool) -> Result<bool, App
         bring_to_front(pid, profile_dir.as_deref());
     }
 
-    // 补不了会话也照样打开
-    match crate::services::claude_desktop_sessions::fill(&session_dirs(&instances)) {
-        Ok(report) => log::info!(
-            "[DesktopAccount] 会话：补上 {}，同步删除 {}（留着 {}），同步归档 {}",
-            report.added,
-            report.sync.trashed,
-            report.sync.kept,
-            report.sync.archived
-        ),
-        Err(error) => log::info!("[DesktopAccount] 打开前没有补齐会话: {error}"),
-    }
+    // 补不了会话也照样打开。平常后台已经同步过（见 `start_background_sync`），这里只是核对一遍
+    sync_sessions(&instances, "打开前");
 
     // 没开着才启动：Desktop 不拦同一个数据目录再开一个
     if target_pid.is_none() {
@@ -268,6 +259,63 @@ fn open_dir(profile_dir: Option<PathBuf>, first_party: bool) -> Result<bool, App
         }
     );
     Ok(first_login)
+}
+
+/// 多久看一次 Desktop 开没开着
+const WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// 在后台趁 Desktop 没开着时把会话同步好（补齐、同步删除和归档，见 `claude_desktop_sessions`），
+/// 打开 Desktop 时只剩核对一遍（文件都没变，几十毫秒）：
+///
+/// - CC Switch 启动时做一次；
+/// - 之后每隔几秒看一眼进程表，有 Desktop 退出了就再做一次。
+///
+/// 只看进程表，不结束也不启动 Desktop；只写没开着的那些数据目录，和打开前补齐一样。没建过账号目录
+/// （没用多账号）时什么都不做。
+pub fn start_background_sync() {
+    if !supported() {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("claude-desktop-session-sync".into())
+        .spawn(|| {
+            let mut last: Option<DesktopInstances> = None;
+            loop {
+                if !profile_dirs().is_empty() {
+                    let instances = running_instances();
+                    let someone_quit = last.as_ref().is_none_or(|before| {
+                        before
+                            .0
+                            .iter()
+                            .any(|(_, dir)| instances.pid_of(dir.as_deref()).is_none())
+                    });
+                    if someone_quit {
+                        sync_sessions(&instances, "后台");
+                    }
+                    last = Some(instances);
+                }
+                std::thread::sleep(WATCH_INTERVAL);
+            }
+        });
+    if let Err(error) = spawned {
+        log::warn!("[DesktopAccount] 没能启动后台会话同步: {error}");
+    }
+}
+
+/// 补齐、同步一遍没开着的数据目录，结果写日志。补不了也不影响打开。
+fn sync_sessions(instances: &DesktopInstances, when: &str) {
+    let started = std::time::Instant::now();
+    match crate::services::claude_desktop_sessions::fill(&session_dirs(instances)) {
+        Ok(report) => log::info!(
+            "[DesktopAccount] {when}同步会话（{} ms）：补上 {}，同步删除 {}（留着 {}），同步归档 {}",
+            started.elapsed().as_millis(),
+            report.added,
+            report.sync.trashed,
+            report.sync.kept,
+            report.sync.archived
+        ),
+        Err(error) => log::info!("[DesktopAccount] {when}没有同步会话: {error}"),
+    }
 }
 
 /// 所有 Desktop 数据目录（默认的和各账号目录），以及各自能不能写（那个 Desktop 没开着）。
@@ -504,9 +552,23 @@ fn launch(profile_dir: Option<&Path>, first_party: bool) -> Result<(), AppError>
 /// 处理命令行 [`OPEN_FLAG`]（冷启动或转给正在运行的实例）：在后台打开，结果只在出错时弹系统对话框
 /// 告诉用户（打开成功时用户看到的就是 Desktop 窗口），不把 CC Switch 的主窗口拿到前台。
 pub fn open_from_command_line(app: &tauri::AppHandle) {
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tauri::Manager;
+    /// 正在打开：快捷键连按时后面几下不再打开一遍（Desktop 刚启动、窗口还没出来时会这样）
+    static OPENING: AtomicBool = AtomicBool::new(false);
+    if OPENING.swap(true, Ordering::AcqRel) {
+        log::info!("[DesktopAccount] 命令行打开 Claude Desktop：上一次还没打开完，这次不重复打开");
+        return;
+    }
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        struct Done;
+        impl Drop for Done {
+            fn drop(&mut self) {
+                OPENING.store(false, Ordering::Release);
+            }
+        }
+        let _done = Done;
         let Some(state) = app.try_state::<crate::store::AppState>() else {
             log::warn!("[DesktopAccount] 命令行打开 Claude Desktop：应用还没准备好");
             return;

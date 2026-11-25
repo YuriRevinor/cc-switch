@@ -139,6 +139,9 @@ pub fn status() -> DesktopProfilesStatus {
     }
 }
 
+/// 命令行参数：按 Claude Desktop 页当前使用中的卡打开 Desktop（见 [`open_current`]），给快捷键用。
+pub const OPEN_FLAG: &str = "--open-claude-desktop";
+
 /// 用户点「打开 Claude Desktop」：打开账号卡对应的 Desktop，返回是不是第一次用这个账号目录（要在
 /// Desktop 里登录）。`account_key` 是账号卡绑的号，用这个号的数据目录（默认数据目录登的正好是这个号、
 /// 又没建过账号目录时用默认的）。
@@ -146,38 +149,85 @@ pub fn status() -> DesktopProfilesStatus {
 /// 要打开的已经开着就只叫到前面。别的 Desktop 开着时报错、什么都不动：CC Switch 从不结束 Desktop。
 /// 打开前把没在运行的目录的会话列表补齐（见 `claude_desktop_sessions`）。
 pub fn open(account_key: &str) -> Result<bool, AppError> {
-    if !supported() {
-        return Err(AppError::localized(
-            "claude_desktop.account.unsupported",
-            "目前只支持 macOS 上的 Claude Desktop（装在「应用程序」文件夹里）和 Windows 上 Microsoft Store / MSIX 安装的 Claude Desktop",
-            "Only Claude Desktop on macOS (installed in Applications) or the Microsoft Store / MSIX install on Windows is supported for now",
-        ));
-    }
-    let profile_dir = {
-        let uuid = account_uuid_of(account_key)?;
-        let dir = accounts_root().join(uuid);
-        let use_default = !dir.is_dir()
-            && default_dir()
-                .and_then(|dir| signed_in_account(&dir))
-                .as_deref()
-                == Some(uuid);
-        (!use_default).then_some(dir)
-    };
+    ensure_supported()?;
+    let uuid = account_uuid_of(account_key)?;
+    let dir = accounts_root().join(uuid);
+    let use_default = !dir.is_dir()
+        && default_dir()
+            .and_then(|dir| signed_in_account(&dir))
+            .as_deref()
+            == Some(uuid);
+    open_dir((!use_default).then_some(dir), true)
+}
 
+/// 命令行 [`OPEN_FLAG`]：和在 Claude Desktop 页当前使用中的卡上点「打开 Claude Desktop」一样。
+/// 账号卡用这个号的数据目录；原来那张官方卡用默认数据目录，都带 1P 登录参数；第三方卡（网关）用默认
+/// 数据目录、不带。同样不结束别的 Desktop，打开前补齐会话。返回是不是第一次用这个账号目录。
+pub fn open_current(state: &crate::store::AppState) -> Result<bool, AppError> {
+    use crate::app_config::AppType;
+    ensure_supported()?;
+    let id = crate::services::provider::ProviderService::current(state, AppType::ClaudeDesktop)?;
+    let provider = if id.is_empty() {
+        None
+    } else {
+        state.db.get_provider_by_id(&id, &AppType::ClaudeDesktop)?
+    };
+    match open_target(provider.as_ref()) {
+        OpenTarget::Account(key) => open(&key),
+        OpenTarget::Default { first_party } => open_dir(None, first_party),
+    }
+}
+
+/// 当前卡要用哪个数据目录打开。
+#[derive(Debug, PartialEq, Eq)]
+enum OpenTarget {
+    /// 账号卡绑的号
+    Account(String),
+    /// 默认数据目录；`first_party`：官方卡（或还没选过卡），带 1P 登录参数
+    Default { first_party: bool },
+}
+
+fn open_target(card: Option<&Provider>) -> OpenTarget {
+    match card {
+        Some(card) => match bound_account_key(card) {
+            Some(key) => OpenTarget::Account(key),
+            None => OpenTarget::Default {
+                first_party: crate::claude_desktop_config::is_official_provider(card),
+            },
+        },
+        // 还没选过卡：Desktop 自己的默认登录
+        None => OpenTarget::Default { first_party: true },
+    }
+}
+
+fn ensure_supported() -> Result<(), AppError> {
+    if supported() {
+        return Ok(());
+    }
+    Err(AppError::localized(
+        "claude_desktop.account.unsupported",
+        "目前只支持 macOS 上的 Claude Desktop（装在「应用程序」文件夹里）和 Windows 上 Microsoft Store / MSIX 安装的 Claude Desktop",
+        "Only Claude Desktop on macOS (installed in Applications) or the Microsoft Store / MSIX install on Windows is supported for now",
+    ))
+}
+
+/// 用 `profile_dir`（`None` 是默认数据目录）打开 Desktop。`first_party`：官方卡，启动时带
+/// `--claude-first-party-sign-in`（只在 Windows 上有意义，见 `win`）。
+fn open_dir(profile_dir: Option<PathBuf>, first_party: bool) -> Result<bool, AppError> {
     let instances = running_instances();
     let target_pid = instances.pid_of(profile_dir.as_deref());
     if instances.any() && target_pid.is_none() {
         return Err(if cfg!(windows) {
             AppError::localized(
                 "claude_desktop.account.others_running",
-                "还有别的 Claude Desktop 开着，CC Switch 不会替你关闭它。请先在托盘图标上退出 Claude，再点「打开 Claude Desktop」",
-                "Another Claude Desktop is running, and CC Switch won't close it for you. Quit Claude from its tray icon, then click Open Claude Desktop again",
+                "还有别的 Claude Desktop 开着，CC Switch 不会替你关闭它。请先在托盘图标上退出 Claude，再重新打开",
+                "Another Claude Desktop is running, and CC Switch won't close it for you. Quit Claude from its tray icon, then open it again",
             )
         } else {
             AppError::localized(
                 "claude_desktop.account.others_running",
-                "还有别的 Claude Desktop 开着，CC Switch 不会替你关闭它。请先退出它（⌘Q），再点「打开 Claude Desktop」",
-                "Another Claude Desktop is running, and CC Switch won't close it for you. Quit it (⌘Q), then click Open Claude Desktop again",
+                "还有别的 Claude Desktop 开着，CC Switch 不会替你关闭它。请先退出它（⌘Q），再重新打开",
+                "Another Claude Desktop is running, and CC Switch won't close it for you. Quit it (⌘Q), then open it again",
             )
         });
     }
@@ -209,7 +259,7 @@ pub fn open(account_key: &str) -> Result<bool, AppError> {
     // 已经开着就只叫到前面：Desktop 不拦同一个数据目录再开一个
     match target_pid {
         Some(pid) => bring_to_front(pid, profile_dir.as_deref()),
-        None => launch(profile_dir.as_deref())?,
+        None => launch(profile_dir.as_deref(), first_party)?,
     }
     log::info!(
         "[DesktopAccount] 已打开 Claude Desktop（{}）",
@@ -412,18 +462,68 @@ fn not_installed() -> AppError {
     )
 }
 
-/// 启动账号卡的 Desktop，`profile_dir` 是账号目录（`None` 用默认数据目录）。这个目录已经在跑时不能
-/// 走这里，见 [`bring_to_front`]。
-fn launch(profile_dir: Option<&Path>) -> Result<(), AppError> {
+/// 启动 Desktop，`profile_dir` 是账号目录（`None` 用默认数据目录），`first_party` 见 [`open_dir`]。
+/// 这个目录已经在跑时不能走这里，见 [`bring_to_front`]。
+fn launch(profile_dir: Option<&Path>, first_party: bool) -> Result<(), AppError> {
     #[cfg(windows)]
     {
-        win::launch(profile_dir, true)
+        win::launch(profile_dir, first_party)
     }
     #[cfg(not(windows))]
     {
+        let _ = first_party;
         launch_macos(profile_dir)
     }
 }
+
+/// 处理命令行 [`OPEN_FLAG`]（冷启动或转给正在运行的实例）：在后台打开，结果只在出错时弹系统对话框
+/// 告诉用户（打开成功时用户看到的就是 Desktop 窗口），不把 CC Switch 的主窗口拿到前台。
+pub fn open_from_command_line(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(state) = app.try_state::<crate::store::AppState>() else {
+            log::warn!("[DesktopAccount] 命令行打开 Claude Desktop：应用还没准备好");
+            return;
+        };
+        match open_current(&state) {
+            Ok(first_login) => log::info!(
+                "[DesktopAccount] 命令行打开 Claude Desktop 完成{}",
+                if first_login {
+                    "（要在里面登录）"
+                } else {
+                    ""
+                }
+            ),
+            Err(error) => {
+                log::warn!("[DesktopAccount] 命令行打开 Claude Desktop 失败: {error}");
+                show_error_dialog(&error.to_string());
+            }
+        }
+    });
+}
+
+#[cfg(windows)]
+fn show_error_dialog(message: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TOPMOST,
+    };
+    let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let text = wide(message);
+    let title = wide("CC Switch · Claude Desktop");
+    // SAFETY: 两个字符串都以 0 结尾、在调用期间有效；没有父窗口
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn show_error_dialog(_message: &str) {}
 
 /// 用 `open` 启动 Desktop。账号目录要 `-n`：另起一个进程才会带上 `--user-data-dir`。
 #[cfg(not(windows))]
@@ -749,6 +849,47 @@ mod tests {
         assert!(!is_account_card(&card));
         // 账号 key 会变成目录名
         assert!(account_uuid_of("../../Library:org").is_err());
+    }
+
+    #[test]
+    fn the_command_line_opens_the_desktop_of_the_current_card() {
+        let key = "aaaaaaaa-0000-4000-8000-000000000001:org";
+        let card = |id: &str, category: &str, bound: bool| -> Provider {
+            let meta = if bound {
+                json!({ "authBinding": {
+                    "source": "managed_account",
+                    "authProvider": "claude_official",
+                    "accountId": key,
+                }})
+            } else {
+                json!({})
+            };
+            serde_json::from_value(json!({
+                "id": id, "name": id, "settingsConfig": {},
+                "category": category, "meta": meta,
+            }))
+            .unwrap()
+        };
+        // 账号卡：这个号的目录
+        assert_eq!(
+            open_target(Some(&card("alt", "official", true))),
+            OpenTarget::Account(key.to_string())
+        );
+        // 原来那张官方卡：默认目录，带 1P
+        assert_eq!(
+            open_target(Some(&card(
+                CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
+                "official",
+                false
+            ))),
+            OpenTarget::Default { first_party: true }
+        );
+        // 第三方网关卡：默认目录，不带 1P
+        assert_eq!(
+            open_target(Some(&card("kimi", "third_party", false))),
+            OpenTarget::Default { first_party: false }
+        );
+        assert_eq!(open_target(None), OpenTarget::Default { first_party: true });
     }
 
     #[test]

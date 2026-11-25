@@ -433,6 +433,15 @@ fn raise_open_file_limit() {
 fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
     static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _serial = SERIAL.lock_recover();
+    // 快捷键调 `cc-switch.exe --open-claude-desktop`：只打开 Claude Desktop，不把主窗口拿到前台
+    if args
+        .iter()
+        .any(|arg| arg == services::claude_desktop_account::OPEN_FLAG)
+    {
+        log::info!("收到命令行 {}", services::claude_desktop_account::OPEN_FLAG);
+        services::claude_desktop_account::open_from_command_line(app);
+        return;
+    }
     log::debug!("Args count: {}", args.len());
     for (i, arg) in args.iter().enumerate() {
         log::debug!("  arg[{i}]: {}", url_for_log(arg));
@@ -465,10 +474,17 @@ fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
     }
 }
 
+/// 这次启动带了 `--open-claude-desktop`（快捷键冷启动）：主窗口不显示，状态就绪后打开 Claude Desktop。
+static OPEN_CLAUDE_DESKTOP_AT_START: AtomicBool = AtomicBool::new(false);
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
     panic_hook::setup_panic_hook();
+    OPEN_CLAUDE_DESKTOP_AT_START.store(
+        std::env::args().any(|arg| arg == services::claude_desktop_account::OPEN_FLAG),
+        Ordering::Relaxed,
+    );
 
     let mut builder = tauri::Builder::default();
 
@@ -518,6 +534,7 @@ pub fn run() {
                 && payload.url().scheme() != "about"
                 && !startup_page_handled.swap(true, Ordering::Relaxed)
                 && !crate::settings::get_settings().silent_startup
+                && !OPEN_CLAUDE_DESKTOP_AT_START.load(Ordering::Relaxed)
             {
                 let window = webview.window();
                 if let Some(main) = webview.app_handle().get_webview_window("main") {
@@ -1286,6 +1303,13 @@ pub fn run() {
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+            if OPEN_CLAUDE_DESKTOP_AT_START.load(Ordering::Relaxed) {
+                log::info!(
+                    "冷启动带 {}：打开 Claude Desktop",
+                    services::claude_desktop_account::OPEN_FLAG
+                );
+                services::claude_desktop_account::open_from_command_line(app.handle());
+            }
             app.manage(services::kimi_oauth::KimiOAuthManager::default());
 
             // 初始化 SkillService
@@ -1535,8 +1559,10 @@ pub fn run() {
                     } else {
                         log::info!("上次退出时在轻量模式，启动后已恢复");
                     }
-                } else if settings.silent_startup {
-                    // 静默启动模式：保持窗口隐藏
+                } else if settings.silent_startup
+                    || OPEN_CLAUDE_DESKTOP_AT_START.load(Ordering::Relaxed)
+                {
+                    // 静默启动模式（或由快捷键 `--open-claude-desktop` 冷启动）：保持窗口隐藏
                     if window.hide().is_ok() {
                         let _ = window.emit("main-window-visibility-changed", ());
                     }

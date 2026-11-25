@@ -1,7 +1,12 @@
 # Claude Desktop 多账号（含 Windows 移植）：本地改动与合并说明
 
 本文记录分支 `merge-dey410-claude-desktop-accounts` 相对上游主线的全部改动，供以后合并上游
-（`origin` = https://github.com/farion1231/cc-switch ）时对照。分支只在本地，没有推送。
+（`origin` = https://github.com/farion1231/cc-switch ）时对照。分支推送在 https://github.com/YuriRevinor/cc-switch 。
+
+> **致谢**：Claude Desktop 多账号功能（账号卡、每个账号一个 Desktop 数据目录、Code 会话补齐）的原始实现来自
+> **Xiaozhu_410（[@Dey410](https://github.com/Dey410)）** 的提交
+> [`8770712d`](https://github.com/Dey410/cc-switch/commit/8770712de0bfa7b51c618131bd374725d37d9ca2)。
+> 本分支的 `d70f706d` 是它的 cherry-pick，保留了原作者；之后的 Windows 移植和其余改动在它的基础上进行。
 
 ## 1. 基点和提交
 
